@@ -1,0 +1,52 @@
+{
+  
+    "comments": {
+        "lineComment": "//"
+    },
+    "brackets": [
+        ["[", "]"],
+        ["(", ")"]
+    ],
+    "autoClosingPairs": [
+        { "open": "[", "close": "]" },
+        { "open": "(", "close": ")" },
+        { "open": "array<", "close": ">" },
+        { "open": "map<", "close": ">" },
+        { "open": "matrix<", "close": ">" },
+        { "open": "new<", "close": ">" },
+        { "open": "'", "close": "'", "notIn": ["string", "comment"] },
+        { "open": "\"", "close": "\"", "notIn": ["string"] }
+    ],
+    "surroundingPairs": [
+        ["<", ">"],
+        ["[", "]"],
+        ["(", ")"],
+        ["\"", "\""],
+        ["'", "'"]
+    ],
+    "folding": {
+        "offSide": true,
+        "markers": {
+            "start": "(^\\s*//\\s*#?region\\b)|(//\\s*\\*\\*.*)",
+            "end": "(^\\s*//\\s*#?endregion\\b)|(//\\s*\\*(?!\\*))"
+        }
+    },
+    "indentationRules": {
+        "increaseIndentPattern": "(?<=^)(((\\s*(\\w+(?:\\.\\w+)*\\s*[\\-+\\/%:*]?=\\s*)?(if|for|while|switch)\\b)|(?:(?<=export\\s|method\\s)|(?<=^)\\s*)?\\w+\\s*\\([^\\)]*?\\)\\s*=>(?=\\/\\/|$|\\n)|\\s+.*?=>\\s*(?=\\/\\/|$|\\n)|(?:export\\s+)?(?:enum|type)))",
+        "decreaseIndentPattern": "^\\s*(else if.+|else)\\s*$"
+    },
+    "onEnterRules": [
+        {
+            "beforeText": "^\\s*(if|for|while|switch|.*=>|.*\\)\\s*=>)",
+            "indentAction": "indent"
+        },
+        {
+            "beforeText": "^\\s*else",
+            "indentAction": "outdent"
+        },
+        {
+            "beforeText": "^\\s*(continue|break)",
+            "indentAction": "outdent"
+        }
+    ]
+}
