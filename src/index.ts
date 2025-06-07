@@ -5,7 +5,7 @@ import * as path from 'path'
 // Only used for typedocs generation tryed to not use from the index
 // to avoid circular dependencies
 export { fs, path }
-export { VSCode } from './VSCode'
+// export { VSCode } from './VSCode'; // Removed as VSCode.ts is deleted
 export { Helpers } from './PineHelpers'
 export { PineTypify } from './PineTypify'
 export { PineSharedCompletionState } from './PineSharedCompletionState'

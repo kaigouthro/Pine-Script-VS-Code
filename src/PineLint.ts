@@ -1,6 +1,6 @@
 import { debounce } from 'lodash'
 import * as vscode from 'vscode'
-import { VSCode } from './VSCode'
+// import { VSCode } from './VSCode'; // Removed
 import { Class } from './PineClass'
 /**
  * PineLint class is responsible for linting Pine Script code.
@@ -80,7 +80,9 @@ export class PineLint {
    * Lints the active document if it exists and the version is correct.
    */
   static async lintDocument(): Promise<void> {
-    if (VSCode.ActivePineFile && !PineLint.initialFlag && (await PineLint.checkVersion())) {
+    const editor = vscode.window.activeTextEditor;
+    // Replaced VSCode.ActivePineFile
+    if (editor && editor.document.languageId === 'pine' && editor.document.uri.scheme === 'file' && !PineLint.initialFlag && (await PineLint.checkVersion())) {
       const response = await Class.PineRequest.lint()
       if (response) {
         PineLint.handleResponse(response)
@@ -149,7 +151,8 @@ export class PineLint {
       }
     }
 
-    const uri = VSCode.Uri
+    const editorForUri = vscode.window.activeTextEditor; // Separate variable for clarity or if editor could change
+    const uri = editorForUri?.document.uri; // Replaced VSCode.Uri
     if (uri) {
       PineLint.setDiagnostics(uri, diagnostics)
     }
@@ -159,7 +162,9 @@ export class PineLint {
    * @param response - The response from the linting process.
    */
   static async handleResponse(response: any): Promise<void> {
-    if (VSCode.ActivePineEditor) {
+    const editor = vscode.window.activeTextEditor;
+    // Replaced VSCode.ActivePineEditor
+    if (editor && editor.document.languageId === 'pine') {
       PineLint.updateDiagnostics(
         response.result?.errors2 || response.reason2?.errors || [],
         response.result?.warnings2 || response.reason2?.warnings || [],
@@ -189,7 +194,8 @@ export class PineLint {
     const script_statement =
       /(?:indicator|strategy|library|study)\s*\((?:(?<!['\"].*)\btitle\s*=)?\s*('[^\']*'|"[^\"]*")/
 
-    const document = VSCode?._Document()
+    // Replaced VSCode?._Document()
+    const document = vscode.window.activeTextEditor?.document
     const replaced = document?.getText().replace(/\r\n/g, '\n')
 
     if (!replaced) {

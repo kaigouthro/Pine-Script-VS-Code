@@ -1,5 +1,5 @@
 import * as vscode from 'vscode'
-import { VSCode } from './VSCode'
+// import { VSCode } from './VSCode'; // Removed
 import { Class } from './PineClass'
 
 /** Utility class for making text edits in the active document. */
@@ -10,9 +10,9 @@ export class EditorUtils {
    * @returns A promise that resolves to a boolean indicating whether the edits were applied successfully.
    */
   static async applyEditsToDocument(edits: vscode.TextEdit[]): Promise<boolean> {
-    const editor = VSCode.Editor
+    const editor = vscode.window.activeTextEditor; // Replaced VSCode.Editor
     if (!editor) {
-      VSCode.Window.showErrorMessage('No active text editor available.')
+      vscode.window.showErrorMessage('No active text editor available.'); // Replaced VSCode.Window.showErrorMessage
       return false
     }
     try {
@@ -292,7 +292,8 @@ export class PineTypify {
    */
   async typifyDocument() {
     await this.makeMap()
-    const document = VSCode.Document
+    const activeEditor = vscode.window.activeTextEditor;
+    const document = activeEditor?.document; // Replaced VSCode.Document
     if (!document) {
       return
     }

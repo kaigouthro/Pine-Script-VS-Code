@@ -2,7 +2,7 @@ import { PineDocsManager } from '../PineDocsManager';
 import { Helpers } from '../PineHelpers';
 import { Class } from '../PineClass';
 import * as vscode from 'vscode';
-import { VSCode } from '../VSCode';
+// import { VSCode } from '../VSCode'; // Removed
 import { PineHoverHelpers } from './PineHoverHelpers';
 // import { PineConsole } from '../PineConsole';
 // Ensure to adjust imports according to your actual structure
@@ -31,7 +31,12 @@ export class PineHoverMethod {
    */
   public async isMethod(): Promise<[PineDocsManager | undefined, string | undefined, string | undefined] | undefined> {
     try {
-      this.line = VSCode.LineText(this.wordRange.start.line);
+      const activeEditor = vscode.window.activeTextEditor;
+      if (!activeEditor) {
+        return;
+      }
+      // Replaced VSCode.LineText
+      this.line = activeEditor.document.lineAt(this.wordRange.start.line).text;
       // PineConsole.log('isMethod', `Line text: ${this.line}`);
       if (!this.line) {
         return;

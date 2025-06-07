@@ -1,5 +1,5 @@
 import * as vscode from 'vscode'
-import { VSCode } from './VSCode'
+// import { VSCode } from './VSCode'; // Removed
 import { Helpers } from './PineHelpers'
 import { PineStrings } from './PineStrings'
 import { Class } from './PineClass'
@@ -27,7 +27,8 @@ export class PineLibHoverProvider implements vscode.HoverProvider {
     // Get the text of the line at the current position
     const lineText = document.lineAt(position.line).text
     // If the document is not a Pine Script document, return undefined
-    if (!VSCode.isPineFile()) {
+    // Replaced VSCode.isPineFile()
+    if (!(document.languageId === 'pine' && document.uri.scheme === 'file')) {
       return
     }
     // If the hover information for this line is cached, return it

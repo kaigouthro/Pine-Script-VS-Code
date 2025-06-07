@@ -1,5 +1,5 @@
 import { Class } from './PineClass'
-import { VSCode } from './VSCode'
+import * as vscode from 'vscode'
 
 /**
  * Class representing the PineResponseFlow for tracking changes in PineScript response.
@@ -57,7 +57,8 @@ export class PineFormatResponse {
   shouldRunConversion() {
     this.confirmed = []
 
-    const docLength = VSCode.Text?.length ?? -1
+    const activeEditor = vscode.window.activeTextEditor
+    const docLength = activeEditor?.document.getText()?.length ?? -1
 
     if (PineResponseFlow.docLength !== docLength || PineResponseFlow.docChange === null) {
       PineResponseFlow.docLength = docLength
