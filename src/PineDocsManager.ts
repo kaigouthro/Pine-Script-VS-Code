@@ -41,6 +41,8 @@ export class PineDocsManager {
   functions2Docs: Record<string, any>[]
   completionFunctionsDocs: Record<string, any>[]
   annotationsDocs: Record<string, any>[]
+  enumsDocs: Record<string, any>[] // Added for enums
+  // constantsDocs is already present
   cleaned = false
 
   /**
@@ -64,9 +66,18 @@ export class PineDocsManager {
     this.methodsDocs = this.Docs.methods[0].docs
     this.controlsDocs = this.Docs.controls[0].docs
     this.variablesDocs = this.Docs.variables[0].docs
-    this.constantsDocs = this.Docs.constants[0].docs
+    this.constantsDocs = this.Docs.constants[0].docs // Already present
     this.functionsDocs = this.Docs.functions[0].docs
     this.annotationsDocs = this.Docs.annotations[0].docs
+    this.enumsDocs = [] // Initialize new property
+  }
+
+  /**
+   * Retrieves the enums documentation.
+   * @returns The enums documentation.
+   */
+  getEnums(): Record<string, any>[] {
+    return this.enumsDocs
   }
 
   /**
@@ -226,6 +237,8 @@ export class PineDocsManager {
         return this.getFields()
       case 'fields2':
         return this.getFields2()
+      case 'enums': // Added case for enums
+        return this.getEnums()
       default:
         return []
     }
@@ -283,6 +296,9 @@ export class PineDocsManager {
         break
       case 'fields2':
         this.fields2Docs = docs
+        break
+      case 'enums': // Added case for enums
+        this.enumsDocs = docs
         break
     }
   }
@@ -408,31 +424,82 @@ export class PineDocsManager {
                 let currentMember = currentDocEntry[keyType].find((m: any) => m.name === memberName)
 
                 if (currentMember) {
-                  // Update properties of the existing member (arg or field)
+                  // --- Enhanced Merge Logic ---
+                  // Type: Parser's type (parsedMember.type) is usually more specific for user code.
+                  // Richer object (currentMember) might have displayType and allowedTypeIDs from lint.
                   currentMember.type = parsedMember.type || currentMember.type;
-                  currentMember.kind = parsedMember.kind || currentMember.kind; // Ensure kind is updated
-                  if (parsedMember.default !== undefined) { // Check for undefined to allow setting null or empty string defaults
-                    currentMember.default = parsedMember.default
+                  currentMember.displayType = currentMember.displayType || parsedMember.type || currentMember.type;
+
+                  currentMember.kind = parsedMember.kind || currentMember.kind; // Parser might refine kind
+
+                  // Default value: Parser's default from code is definitive.
+                  if (parsedMember.default !== undefined) {
+                      currentMember.default = parsedMember.default;
+                      // If a default is set by parser, it implies optional for args,
+                      // unless lint explicitly said required for that arg.
+                      // For UDT fields, default also implies it's not strictly "required" to be initialized by .new() user.
+                      if (keyType === 'args') {
+                          if (currentMember.required !== true) { // Don't override if lint said it IS required
+                             currentMember.required = false;
+                          }
+                      } else { // UDT fields
+                          currentMember.required = false; // Presence of default means not strictly required at instantiation
+                      }
                   }
-                  if (parsedMember.isConst !== undefined) { // Ensure isConst is updated
-                    currentMember.isConst = parsedMember.isConst;
+
+                  // isConst: Parser can determine this from source code.
+                  if (parsedMember.isConst !== undefined) {
+                      currentMember.isConst = parsedMember.isConst;
                   }
-                  if (keyType === 'args') { // Argument-specific properties
-                    currentMember.required = parsedMember.required; // Note: UDT fields don't typically have 'required' in the same way as func args
-                    if (parsedMember.modifier) {
-                      currentMember.modifier = parsedMember.modifier;
-                    }
+
+                  // Required status (primarily for function arguments from 'args'):
+                  if (keyType === 'args') {
+                      // If parser explicitly provides 'required', use it.
+                      if (typeof parsedMember.required === 'boolean') {
+                          currentMember.required = parsedMember.required;
+                      } else if (parsedMember.default !== undefined && typeof currentMember.required === 'undefined') {
+                          // If parser sets a default and lint didn't specify 'required', then it's not required.
+                          currentMember.required = false;
+                      }
+                      // Otherwise, currentMember.required (from lint) is preserved if it existed.
+                      // If neither lint nor parser (via default) makes it optional, it remains required by default.
+
+                      if (parsedMember.modifier) { // e.g. "simple", "input", "series"
+                          currentMember.modifier = parsedMember.modifier;
+                      }
                   }
+
+                  // Preserve fields from lint if not overridden by parser:
+                  // currentMember.desc (array) is usually from lint and should be kept.
+                  // currentMember.allowedTypeIDs (array) is from lint, keep.
+                  // currentMember.info (string for arg) is from lint, keep.
+
                 } else {
-                  // Add new member if not found
-                  currentDocEntry[keyType].push(parsedMember);
+                  // Add new member if not found (parser found it, but it wasn't in original lint doc)
+                  // Ensure it has a structure consistent with other rich objects, even if some fields are blank.
+                  const newMemberToAdd = { ...parsedMember };
+                  if (keyType === 'args' && typeof newMemberToAdd.required === 'undefined') {
+                    newMemberToAdd.required = (typeof newMemberToAdd.default === 'undefined');
+                  }
+                  currentDocEntry[keyType].push(newMemberToAdd);
                 }
               }
             }
-            currentMap.set(name, currentDocEntry)
-          } else if (keyType === 'args' || keyType === 'fields') { 
-            // Add new entry if it doesn't exist in the map (for functions/args or UDTs/fields)
-            currentMap.set(name, doc);
+            // No need to currentMap.set here as currentDocEntry is a reference to the object in the map.
+            // currentMap.set(name, currentDocEntry); // This would only be needed if currentDocEntry was a copy.
+          } else if (keyType === 'args' || keyType === 'fields') {
+            // This case handles when the function/UDT itself is new from parsing (not in initial map).
+            // Ensure the 'args' or 'fields' array within 'doc' has members with 'required' status determined.
+            if (doc[keyType] && Array.isArray(doc[keyType])) {
+              doc[keyType].forEach((member: any) => {
+                if (keyType === 'args' && typeof member.required === 'undefined') {
+                  member.required = (typeof member.default === 'undefined');
+                } else if (keyType === 'fields' && typeof member.required === 'undefined') {
+                  member.required = (typeof member.default === 'undefined');
+                }
+              });
+            }
+            currentMap.set(name, doc); // Add new function/UDT doc from parser
           }
         }
         // Save the updated map.

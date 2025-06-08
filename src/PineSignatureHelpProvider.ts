@@ -159,16 +159,28 @@ export class PineSignatureHelpProvider implements vscode.SignatureHelpProvider {
 
           udtSignature.parameters = udtDocs.args.map((field: any) => {
             const paramLabel = `${field.name}: ${field.type}`
-            let docString = new vscode.MarkdownString()
-            docString.appendCodeblock(`(field) ${paramLabel}`, 'pine')
-            if (field.desc) {
-              docString.appendMarkdown(`\n\n${field.desc}`)
+            let docString = new vscode.MarkdownString();
+            const fieldType = field.type || field.displayType || 'any'; // Prefer field.type for UDTs
+            const richParamLabel = `${field.name}: ${fieldType}`;
+            docString.appendCodeblock(`(field) ${richParamLabel}`, 'pine');
+
+            const description = field.desc ? (Array.isArray(field.desc) ? field.desc.join('\n\n') : field.desc) : '';
+            if (description) {
+              docString.appendMarkdown(`\n\n${description}`);
             }
-            // The old logic for extracting @field from udtDocs.doc might be less relevant
-            // if the service's getFunctionDocs for .new already processes fields into args with descriptions.
-            return new vscode.ParameterInformation(paramLabel, docString)
-          })
-          this.signatureHelp.signatures.push(udtSignature)
+
+            if (typeof field.default !== 'undefined') {
+              docString.appendMarkdown(`\n\n*Default: \`${field.default}\`*`);
+            } else {
+              // For UDT fields, they are generally considered required if no default is specified.
+              // The 'required' field might not be explicitly set on UDT field definitions from lint.
+              // If PineFormatResponse adds 'required: false' for fields with defaults, this could be used.
+              // For now, presence of default implies optionality.
+              docString.appendMarkdown(`\n\n*Required*`);
+            }
+            return new vscode.ParameterInformation(richParamLabel, docString);
+          });
+          this.signatureHelp.signatures.push(udtSignature);
           this.paramIndexes = [fieldNames]
           this.activeSignature = 0
 
@@ -399,48 +411,71 @@ export class PineSignatureHelpProvider implements vscode.SignatureHelpProvider {
         continue
       }
 
-      const { name, desc } = argDocs
-      const argType = argDocs?.displayType ?? argDocs?.type ?? ''
+      const name = argDocs.name;
+      const description = argDocs.desc ? (Array.isArray(argDocs.desc) ? argDocs.desc.join('\n\n') : argDocs.desc) : 'No description available.';
+      const argType = argDocs.displayType || argDocs.type || 'any';
+      const { defaultValue, required } = this.getParameterDetails(argDocs); // Uses new .default and .required
 
-      const paramLabel = `${argType !== '' ? ' ' : ''}${name}`
-      const { defaultValue, required } = this.getParameterDetails(argDocs)
-      const questionMark = !required && defaultValue !== '' ? '?' : ''
+      // Parameter label for ParameterInformation: "paramName: type"
+      const paramLabelForInfo = `${name}: ${argType}`;
 
-      if (!required && defaultValue !== '') {
-        updatedSyntax = updatedSyntax.replace(RegExp(`\\b${name}\\b`), `${name}?`)
+      // Parameter label for syntax string in docs: "paramName?" or "paramName"
+      // This is used to update the main signature string.
+      let paramLabelForSyntax = name;
+      if (!required && defaultValue) { // Only add '?' if optional AND has a default for visual cue
+        paramLabelForSyntax = `${name}?`;
+        // Update the main signature string to show "paramName?"
+        // This regex needs to be careful not to match "paramName" as part of another word.
+        updatedSyntax = updatedSyntax.replace(new RegExp(`\\b${name}\\b(?=[\\s,)=])`), paramLabelForSyntax);
       }
 
-      const paramDocumentation = new vscode.MarkdownString(
-        `**${
-          required ? 'Required' : 'Optional'
-        }**\n\`\`\`pine\n${paramLabel}${questionMark}: ${argType}${defaultValue}\n\`\`\`\n${desc.trim()}`,
-      )
+      let docMd = `**${argType}**`; // Start with type in bold
+      if (!required) {
+        docMd += ` (optional)`;
+      }
+      if (defaultValue) { // defaultValue from getParameterDetails includes " = value"
+        docMd += `\n\n*Default: \`${argDocs.default}\`*`; // Show default value clearly
+      }
+      docMd += `\n\n${description}`;
 
-      activeSignatureHelper.push({ arg: name, type: argType })
-      const startEnd = this.findRegexMatchPosition(updatedSyntax, name)
+      const paramDocumentation = new vscode.MarkdownString(docMd);
+
+      activeSignatureHelper.push({ arg: name, type: argType });
+      // findRegexMatchPosition uses the potentially modified name (e.g., name?)
+      const startEnd = this.findRegexMatchPosition(updatedSyntax, paramLabelForSyntax);
 
       if (!startEnd) {
         continue
       }
 
-      const paramInfo = new vscode.ParameterInformation(startEnd, paramDocumentation)
-      parameters.push(paramInfo)
-      paramIndexes.push(name)
+      const paramInfo = new vscode.ParameterInformation(paramLabelForInfo, paramDocumentation);
+      parameters.push(paramInfo);
+      paramIndexes.push(name); // Use original name for indexing
     }
 
-    return [parameters, paramIndexes, activeSignatureHelper, updatedSyntax]
+    return [parameters, paramIndexes, activeSignatureHelper, updatedSyntax];
   }
 
   private getParameterDetails(argDocs: any): { defaultValue: string; required: boolean } {
-    let defaultValue = ''
-    if (argDocs.default === null || argDocs.default === 'null') {
-      defaultValue = ' = na'
-    } else if (argDocs.default !== undefined && argDocs.default !== 'undefined') {
-      defaultValue = ` = ${argDocs.default}`
+    // argDocs is the rich argument object: { name, displayType, desc, required, default, ... }
+    let defaultValueString = '';
+    // The 'default' property from lint can be 'null' (string), null (actual null), or a value.
+    if (argDocs.default !== undefined) { // Check if 'default' key exists
+        if (argDocs.default === null || argDocs.default === 'null') {
+            defaultValueString = ' = na'; // Standard Pine representation for null/na default
+        } else {
+            defaultValueString = ` = ${argDocs.default}`;
+        }
     }
 
-    const required = argDocs?.required ?? defaultValue === ''
-    return { defaultValue, required }
+    // 'required' is a boolean from the new lint format.
+    // If 'required' is explicitly false, it's optional.
+    // If 'required' is true, it's required.
+    // If 'required' is undefined (e.g. for UDT fields not explicitly marked),
+    // it's required if it doesn't have a default value.
+    let required = argDocs.required ?? (defaultValueString === '');
+
+    return { defaultValue: defaultValueString, required };
   }
 
   private calculateActiveParameter(): number {

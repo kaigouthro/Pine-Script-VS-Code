@@ -380,24 +380,36 @@ export class PineHoverProvider implements vscode.HoverProvider {
    * @return A promise that resolves to a MarkdownString providing the hover information.
    */
   private async createHoverMarkdown(
-    keyedDocs: PineDocsManager,
+    keyedDocs: any, // Corrected type: This is the actual documentation object, not the manager
     key: string,
     namespace: string | undefined,
     regexId: string,
   ): Promise<vscode.MarkdownString> {
-    // Assemble an array of promises to execute
-    const promises = [
-      PineHoverBuildMarkdown.appendSyntax(keyedDocs, key, namespace, regexId, this.mapArrayMatrix),
-      PineHoverBuildMarkdown.appendDescription(keyedDocs, regexId),
-      PineHoverBuildMarkdown.appendParams(keyedDocs),
-      PineHoverBuildMarkdown.appendReturns(keyedDocs, regexId),
-      PineHoverBuildMarkdown.appendRemarks(keyedDocs),
-      PineHoverBuildMarkdown.appendSeeAlso(keyedDocs, key),
-    ]
+    const markdownSections: Promise<string[]>[] = [];
+
+    markdownSections.push(PineHoverBuildMarkdown.appendSyntax(keyedDocs, key, namespace, regexId, this.mapArrayMatrix));
+    markdownSections.push(PineHoverBuildMarkdown.appendDescription(keyedDocs, regexId));
+
+    const docKind = keyedDocs?.kind?.toLowerCase() || '';
+    const isUDT = docKind.includes('udt') || docKind.includes('user defined type') || (regexId === 'UDT' && keyedDocs?.fields);
+    const isEnum = docKind.includes('enum') || (regexId === 'Enum' && keyedDocs?.fields); // Assuming regexId could be 'Enum'
+
+    if (isUDT) {
+      markdownSections.push(PineHoverBuildMarkdown.appendUDTFields(keyedDocs));
+    } else if (isEnum) {
+      markdownSections.push(PineHoverBuildMarkdown.appendEnumMembers(keyedDocs));
+    } else {
+      // Only append Params for functions/methods, not for UDTs/Enums which use Fields/Members
+      markdownSections.push(PineHoverBuildMarkdown.appendParams(keyedDocs));
+    }
+
+    markdownSections.push(PineHoverBuildMarkdown.appendReturns(keyedDocs, regexId));
+    markdownSections.push(PineHoverBuildMarkdown.appendRemarks(keyedDocs));
+    markdownSections.push(PineHoverBuildMarkdown.appendSeeAlso(keyedDocs, key));
+
     // Wait for all promises to resolve and then join their results into a markdown string
-    const markdownContent = await Promise.all(promises).then((markdownSections) => {
-      return markdownSections.flat().join('\n')
-    })
+    const resolvedMarkdownSections = await Promise.all(markdownSections);
+    const markdownContent = resolvedMarkdownSections.flat().join('\n');
     // Create a MarkdownString object for the hover content
     const markdownString = new vscode.MarkdownString(markdownContent)
     // Allow command URIs, HTTP(S) links and markdown.render setting to be used

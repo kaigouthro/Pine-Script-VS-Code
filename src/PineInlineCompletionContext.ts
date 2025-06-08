@@ -354,16 +354,18 @@ export class PineInlineCompletionContext implements vscode.InlineCompletionItemP
         const functionCallMatch = linePrefix.trim().match(/(\w+)\([\s]*$/) // Capture function name if needed for context
         if (functionCallMatch && functionCallMatch[1]) {
           const functionName = functionCallMatch[1]
-          const functionDoc = Class.PineDocsManager.getFunctionDocs(functionName) // Use the new getFunctionDocs
+          // Assuming Class.PineDocsManager.getFunctionDocs returns a CompletionDoc,
+          // where the actual function data (including args) is in the .doc property.
+          const functionCompletionDoc = Class.PineDocsManager.getFunctionDocs(functionName)
 
-          if (functionDoc && functionDoc.args) {
-            // Check if functionDoc and args exist
-            PineSharedCompletionState.setCompletions(functionDoc.args) // Set completions from functionDoc.args
+          if (functionCompletionDoc && functionCompletionDoc.doc && functionCompletionDoc.doc.args && Array.isArray(functionCompletionDoc.doc.args)) {
+            // Check if functionDoc, its .doc property, and .doc.args exist and args is an array
+            PineSharedCompletionState.setCompletions(functionCompletionDoc.doc.args) // Set completions from functionCompletionDoc.doc.args
             PineSharedCompletionState.setArgumentCompletionsFlag(true) // Ensure flag is set
-            return await this.argumentInlineCompletions(document, position, functionDoc.args) // Pass functionDoc.args to argumentInlineCompletions
+            return await this.argumentInlineCompletions(document, position, functionCompletionDoc.doc.args) // Pass .doc.args
           }
         }
-        return [] // If no function name or args found in this context, return empty
+        return [] // If no function name or args found, or structure is not as expected
       }
 
       // If there are no completions in the shared state, match the text before the cursor

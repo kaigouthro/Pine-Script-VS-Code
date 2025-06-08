@@ -104,7 +104,7 @@ export class PineLint {
    * Updates the diagnostics for the active document.
    * @param dataGroups - The groups of data to update the diagnostics with.
    */
-  static async updateDiagnostics(...dataGroups: any[][]): Promise<void> {
+  static async updateDiagnostics(errors: any[], warnings: any[], infos?: any[]): Promise<void> {
     const activeEditor = vscode.window.activeTextEditor
     if (!activeEditor) {
       return
@@ -118,34 +118,41 @@ export class PineLint {
     }
 
     const diagnostics: vscode.Diagnostic[] = []
-    const errorDecorationRanges: vscode.Range[] = []
-    const warningDecorationRanges: vscode.Range[] = []
-    let i = 0
-    for (const group of dataGroups) {
-      i += 1
-      if (!group || group.length === 0) {
-        // Corrected condition to skip EMPTY groups only
-        continue // Skip to next group if current group is empty
-      }
+    // const errorDecorationRanges: vscode.Range[] = [] // Not used in current logic
+    // const warningDecorationRanges: vscode.Range[] = [] // Not used in current logic
 
-      for (const data of group) {
-        // Now, this loop WILL execute for non-empty groups
+    // Process errors
+    if (errors && errors.length > 0) {
+      for (const data of errors) {
         const { end, message, start } = data
         const range = new vscode.Range(start.line - 1, start.column - 1, end.line - 1, end.column)
-
-        let severity: vscode.DiagnosticSeverity
-        if (i == 1 || i == 3) {
-          severity = vscode.DiagnosticSeverity.Error
-        } else if (i == 2 || i == 4) {
-          severity = vscode.DiagnosticSeverity.Warning
-        } else {
-          severity = vscode.DiagnosticSeverity.Information
-        }
+        let severity = vscode.DiagnosticSeverity.Error
+        // Special case for calculation messages, might need re-evaluation
         if (message.includes('calculation')) {
           severity = vscode.DiagnosticSeverity.Warning
         }
-
         diagnostics.push(new vscode.Diagnostic(range, message, severity))
+      }
+    }
+
+    // Process warnings
+    if (warnings && warnings.length > 0) {
+      for (const data of warnings) {
+        const { end, message, start } = data
+        const range = new vscode.Range(start.line - 1, start.column - 1, end.line - 1, end.column)
+        // If a message was already classified as a warning by the 'calculation' check in errors,
+        // it shouldn't be processed again here if backend might send it in both arrays.
+        // However, the new structure implies distinct arrays for errors and warnings.
+        diagnostics.push(new vscode.Diagnostic(range, message, vscode.DiagnosticSeverity.Warning))
+      }
+    }
+
+    // Process infos
+    if (infos && infos.length > 0) {
+      for (const data of infos) {
+        const { end, message, start } = data
+        const range = new vscode.Range(start.line - 1, start.column - 1, end.line - 1, end.column)
+        diagnostics.push(new vscode.Diagnostic(range, message, vscode.DiagnosticSeverity.Information))
       }
     }
 
@@ -159,14 +166,27 @@ export class PineLint {
    * @param response - The response from the linting process.
    */
   static async handleResponse(response: any): Promise<void> {
-    if (VSCode.ActivePineEditor) {
+    if (VSCode.ActivePineEditor && response && response.success && response.result) {
       PineLint.updateDiagnostics(
-        response.result?.errors2 || response.reason2?.errors || [],
-        response.result?.warnings2 || response.reason2?.warnings || [],
-        response.result?.errors || [],
-        response.result?.warnings || [],
+        response.result.errors || [],
+        response.result.warnings || [],
+        response.result.info || [] // Add info messages if they exist in the new structure
       )
+    } else if (response && !response.success) {
+      // Handle unsuccessful responses, maybe clear diagnostics or log an error
+      // For now, if the response indicates failure or is malformed, we clear diagnostics
+      // or show a generic error. Let's clear diagnostics for now.
+      const uri = VSCode.Uri
+      if (uri) {
+        PineLint.setDiagnostics(uri, [])
+      }
+      console.error("Linting request was not successful or result is missing:", response);
     }
+    // The old code also had a path for response.reason2.errors, etc.
+    // This is removed assuming the new structure is { success: boolean, result: { ... } }
+    // The check for `response.result?.errors2` in `checkVersion` for version errors
+    // might need to be updated if it's still relevant.
+    // For now, this `handleResponse` focuses on the main linting flow.
   }
 
   /**
@@ -218,14 +238,17 @@ export class PineLint {
 
         if (matchPosition && matchEndPosition) {
           const errorObj = {
+            success: true, // To align with the new structure expected by handleResponse
             result: {
-              errors2: [
+              errors: [ // Changed from errors2 to errors
                 {
                   start: { line: matchPosition.line + 1, column: matchPosition.character + 1 },
                   end: { line: matchEndPosition.line + 1, column: matchEndPosition.character + 1 },
                   message: versionMsg,
                 },
               ],
+              warnings: [], // Add empty arrays for other expected properties
+              info: []      // Add empty arrays for other expected properties
             },
           }
           PineLint.handleResponse(errorObj)

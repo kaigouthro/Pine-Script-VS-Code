@@ -121,15 +121,41 @@ export class PineCompletionProvider implements vscode.CompletionItemProvider {
       label = label + openParen + closeParen
 
       // Use doc.description from CompletionDoc, fallback to doc.doc.desc if needed by checkDesc
-      const formattedDesc = Helpers.formatUrl(Helpers?.checkDesc(doc.description || doc.doc?.desc))
+      let mainDescription = Helpers.formatUrl(Helpers?.checkDesc(doc.description || doc.doc?.desc))
+
+      // Enhance documentation for functions/methods with args
+      let argsDocumentation = "";
+      if (doc.doc && (doc.doc.kind?.includes('Function') || doc.doc.kind?.includes('Method')) && doc.doc.args && Array.isArray(doc.doc.args)) {
+        argsDocumentation += "\n\n**Parameters:**\n";
+        doc.doc.args.forEach((arg: any) => {
+          argsDocumentation += `* \`${arg.name}\` (${arg.displayType || 'any'}): ${Helpers.checkDesc(arg.desc) || 'No description.'}${arg.required ? " (required)" : ""}\n`;
+        });
+      }
+      // For UDT fields or Enum members, their description is usually in doc.doc.desc
+      else if (doc.doc && (doc.doc.kind?.includes('Field') || doc.doc.kind?.includes('EnumMember')) && doc.doc.desc) {
+        // mainDescription is already populated with doc.doc.desc through Helpers.checkDesc
+      }
+
+      const fullDocumentation = new vscode.MarkdownString(mainDescription + argsDocumentation);
+      fullDocumentation.appendCodeblock(modifiedSyntax, 'pine');
+
       // Determine the kind of the completion item
       // Pass doc.doc (original doc object) to determineCompletionItemKind for docDetails
       const itemKind = await this.determineCompletionItemKind(kind, doc.doc)
       // Create a new CompletionItem object
       const completionItem = new vscode.CompletionItem(label, itemKind)
-      completionItem.documentation = new vscode.MarkdownString(`${formattedDesc} \`\`\`pine\n${modifiedSyntax}\n\`\`\``)
+      completionItem.documentation = fullDocumentation
       const detail = kind ?? ''
-      completionItem.detail = detail
+      // Enhance detail for functions/methods with a more concise signature
+      if (doc.doc && (doc.doc.kind?.includes('Function') || doc.doc.kind?.includes('Method'))) {
+        let paramsShort = "";
+        if (doc.doc.args && Array.isArray(doc.doc.args)) {
+          paramsShort = doc.doc.args.map((arg: any) => `${arg.name}: ${arg.displayType || 'any'}`).join(', ');
+        }
+        completionItem.detail = `${kind} (${paramsShort})`;
+      } else {
+        completionItem.detail = detail
+      }
 
       // Use a snippet string for the insert text
       let insertText = label
@@ -355,21 +381,31 @@ export class PineCompletionProvider implements vscode.CompletionItemProvider {
         ) {
           itemKind = vscode.CompletionItemKind.Field
           // Let determineCompletionItemKind handle all kind assignments consistently
-          // The specific if/else if here for field/property/parameter was overriding it.
-          itemKind = await this.determineCompletionItemKind(completionData.kind, completionData)
+          itemKind = await this.determineCompletionItemKind(completionData.kind || 'Parameter', completionData)
 
-          const docData = completionData as CompletionDoc
+          // Construct a CompletionDoc-like object for the argument
+          const argCompletionDoc: CompletionDoc = {
+            name: completionData.name, // e.g., "length=" or "true"
+            kind: completionData.kind || 'Parameter', // "Parameter" or more specific if available
+            description: completionData.desc, // Description of the argument
+            doc: completionData, // The original argument object { name, displayType, desc, required, etc. }
+            isMethod: false, // Arguments are not methods
+            namespace: null, // Arguments don't have a namespace in this context
+            // returnedType: completionData.displayType, // Not directly a returned type
+          };
+
           const completionItem = await this.createCompletionItem(
             document,
-            docData.name,
-            docData.namespace ?? null,
-            docData,
+            argCompletionDoc.name,    // Name for createCompletionItem (e.g. "length=")
+            null,                     // No namespace for args
+            argCompletionDoc,         // The constructed CompletionDoc
             position,
-            true,
+            true,                     // argCompletion is true
           )
 
           if (completionItem) {
-            completionItem.kind = itemKind
+            // itemKind was already determined and used in createCompletionItem if it defaults
+            // completionItem.kind = itemKind; // kind is set within createCompletionItem
             completionItem.sortText = `order${index.toString().padStart(4, '0')}`
             this.completionItems.push(completionItem)
             anyAdded = true
