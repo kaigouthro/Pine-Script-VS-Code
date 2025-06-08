@@ -1,6 +1,6 @@
 import * as vscode from 'vscode'
 import { PineDocsManager } from '../PineDocsManager'
-import { VSCode } from '../VSCode'
+// import { VSCode } from '../VSCode'; // Removed
 import { Helpers } from '../PineHelpers'
 
 /**
@@ -40,7 +40,12 @@ export class PineHoverParam {
    */
   public async isParam(): Promise<[any | undefined, string | undefined, undefined] | undefined> {
     try {
-      this.line = VSCode.LineText(this.wordRange.start.line)
+      const activeEditor = vscode.window.activeTextEditor;
+      if (!activeEditor) {
+        return;
+      }
+      // Replaced VSCode.LineText
+      this.line = activeEditor.document.lineAt(this.wordRange.start.line).text;
       if (!this.line) {
         return
       }

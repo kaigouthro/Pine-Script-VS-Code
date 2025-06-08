@@ -1,5 +1,5 @@
 import * as vscode from 'vscode'
-import { VSCode } from './VSCode'
+// import { VSCode } from './VSCode'; // Removed
 
 export class PineUserInputs {
   // private readonly SESSION_ID_KEY = 'session_id'
@@ -26,19 +26,19 @@ export class PineUserInputs {
   async setUsername(username: string | undefined = undefined) {
     if (await this.getUsername()) {
       await this.secrets.delete(this.USERNAME_KEY)
-      VSCode.Window.showInformationMessage('Pine: Username cleared')
+      vscode.window.showInformationMessage('Pine: Username cleared'); // Replaced VSCode.Window
       return
     }
     if (!username) {
-      username = await VSCode.Window.showInputBox({
+      username = await vscode.window.showInputBox({ // Replaced VSCode.Window
         prompt: 'Pine: Enter your username',
       })
     }
     if (username) {
       await this.secrets.store(this.USERNAME_KEY, username)
-      VSCode.Window.showInformationMessage('Pine: Username saved')
+      vscode.window.showInformationMessage('Pine: Username saved'); // Replaced VSCode.Window
     } else {
-      VSCode.Window.showInformationMessage('Pine: No Username Provided')
+      vscode.window.showInformationMessage('Pine: No Username Provided'); // Replaced VSCode.Window
     }
   }
 

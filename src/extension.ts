@@ -1,4 +1,4 @@
-import { VSCode } from './VSCode'
+import * as vscode from 'vscode'
 import { Class } from './PineClass'
 import { PineDocString } from './PineDocString'
 import { PineResponseFlow } from './PineFormatResponse'
@@ -13,6 +13,14 @@ export function deactivate() {
   PineLint.handleDocumentChange()
   return undefined
 }
+
+let extensionContext: vscode.ExtensionContext;
+// let newVersionFlag: boolean = true; // Removed as it seems unused by newVersionPopUp.ts
+
+// export function setNewVersionFlag(newVersionBool: boolean) { // Removed as it seems unused by newVersionPopUp.ts
+//   newVersionFlag = newVersionBool;
+// }
+
 
 let timerStart: number = 0
 // Make it so that if there is no change within 5 seconds it runs a lint
@@ -31,13 +39,12 @@ setInterval(checkForChange, 5000)
 // Activate Function =============================================
 export async function activate(context: vscode.ExtensionContext) {
   console.log('Pine Language Server Activate')
+  extensionContext = context; // Store the context
 
   // Check for new version
-  checkForNewVersionAndShowChangelog(context)
+  checkForNewVersionAndShowChangelog(context) // This function might need adjustment if it uses VSCode.newVersionFlag
 
-  // Set context
-  VSCode.setContext(context)
-  Class.setContext(context)
+  Class.setContext(extensionContext); // Reinstate with the stored context
 
   // Initialize PineDocsManager and PineCompletionService
   // PineDocsManager is accessed via a getter that initializes it if not already.
@@ -54,24 +61,26 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.window.onDidChangeActiveTextEditor(async () => {
       docmanager.cleanDocs()
       PineResponseFlow.resetDocChange()
-      if (VSCode.LanguageId !== 'pine' && !VSCode.ActivePineFile) {
+      const editor = vscode.window.activeTextEditor;
+      if (editor?.document.languageId !== 'pine' && !(editor?.document.languageId === 'pine' && editor?.document.uri.scheme === 'file')) {
         deactivate()
       } else {
-        if (PineLint.diagnostics.length > 0 && VSCode.Uri) {
-          PineLint.DiagnosticCollection.set(VSCode.Uri, PineLint.diagnostics)
+        if (PineLint.diagnostics.length > 0 && editor?.document.uri) {
+          PineLint.DiagnosticCollection.set(editor.document.uri, PineLint.diagnostics)
         }
         PineLint.initialFlag = true
         PineLint.initialLint()
       }
     }),
-    vscode.workspace.onDidOpenTextDocument(async () => {
-      if (VSCode.ActivePineFile) {
+    vscode.workspace.onDidOpenTextDocument(async (document) => {
+      if (document.languageId === 'pine' && document.uri.scheme === 'file') {
         PineLint.handleDocumentChange()
       }
     }),
 
     vscode.workspace.onDidChangeTextDocument(async (event) => {
-      if (event.contentChanges.length > 0 && VSCode.ActivePineFile) {
+      const editor = vscode.window.activeTextEditor;
+      if (event.contentChanges.length > 0 && editor?.document.languageId === 'pine' && editor?.document.uri.scheme === 'file') {
         PineLint.handleDocumentChange()
         timerStart = new Date().getTime()
       }
@@ -90,31 +99,31 @@ export async function activate(context: vscode.ExtensionContext) {
       console.log('Document saved:', document.fileName)
     }),
 
-    VSCode.RegisterCommand('pine.docString', async () => new PineDocString().docstring()),
-    VSCode.RegisterCommand('pine.getStandardList', async () => Class.PineScriptList.showMenu('built-in')),
-    VSCode.RegisterCommand('pine.typify', async () => new PineTypify().typifyDocument()),
-    VSCode.RegisterCommand('pine.getIndicatorTemplate', async () => Class.PineTemplates.getIndicatorTemplate()),
-    VSCode.RegisterCommand('pine.getStrategyTemplate', async () => Class.PineTemplates.getStrategyTemplate()),
-    VSCode.RegisterCommand('pine.getLibraryTemplate', async () => Class.PineTemplates.getLibraryTemplate()),
-    VSCode.RegisterCommand('pine.setUsername', async () => Class.PineUserInputs.setUsername()),
-    VSCode.RegisterCommand('pine.completionAccepted', () => Class.PineCompletionProvider.completionAccepted()),
-    VSCode.Lang.registerColorProvider({ scheme: 'file', language: 'pine' }, Class.PineColorProvider),
-    VSCode.Lang.registerHoverProvider({ scheme: 'file', language: 'pine' }, Class.PineHoverProvider),
-    VSCode.Lang.registerHoverProvider({ scheme: 'file', language: 'pine' }, Class.PineLibHoverProvider),
-    VSCode.Lang.registerRenameProvider({ scheme: 'file', language: 'pine' }, Class.PineRenameProvider),
-    VSCode.Lang.registerInlineCompletionItemProvider(
+    vscode.commands.registerCommand('pine.docString', async () => new PineDocString().docstring()),
+    vscode.commands.registerCommand('pine.getStandardList', async () => Class.PineScriptList.showMenu('built-in')),
+    vscode.commands.registerCommand('pine.typify', async () => new PineTypify().typifyDocument()),
+    vscode.commands.registerCommand('pine.getIndicatorTemplate', async () => Class.PineTemplates.getIndicatorTemplate()),
+    vscode.commands.registerCommand('pine.getStrategyTemplate', async () => Class.PineTemplates.getStrategyTemplate()),
+    vscode.commands.registerCommand('pine.getLibraryTemplate', async () => Class.PineTemplates.getLibraryTemplate()),
+    vscode.commands.registerCommand('pine.setUsername', async () => Class.PineUserInputs.setUsername()),
+    vscode.commands.registerCommand('pine.completionAccepted', () => Class.PineCompletionProvider.completionAccepted()),
+    vscode.languages.registerColorProvider({ scheme: 'file', language: 'pine' }, Class.PineColorProvider),
+    vscode.languages.registerHoverProvider({ scheme: 'file', language: 'pine' }, Class.PineHoverProvider),
+    vscode.languages.registerHoverProvider({ scheme: 'file', language: 'pine' }, Class.PineLibHoverProvider),
+    vscode.languages.registerRenameProvider({ scheme: 'file', language: 'pine' }, Class.PineRenameProvider),
+    vscode.languages.registerInlineCompletionItemProvider(
       { scheme: 'file', language: 'pine' },
       Class.PineInlineCompletionContext,
     ),
-    VSCode.Lang.registerSignatureHelpProvider(
+    vscode.languages.registerSignatureHelpProvider(
       { scheme: 'file', language: 'pine' },
       Class.PineSignatureHelpProvider,
       '(',
       ',',
       '',
     ),
-    VSCode.Lang.registerCompletionItemProvider({ scheme: 'file', language: 'pine' }, Class.PineLibCompletionProvider),
-    VSCode.Lang.registerCompletionItemProvider(
+    vscode.languages.registerCompletionItemProvider({ scheme: 'file', language: 'pine' }, Class.PineLibCompletionProvider),
+    vscode.languages.registerCompletionItemProvider(
       { scheme: 'file', language: 'pine' },
       Class.PineCompletionProvider,
       '.',

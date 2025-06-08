@@ -1,4 +1,4 @@
-import { VSCode, Helpers } from './index'
+import { Helpers } from './index' // VSCode removed
 import { Class } from './PineClass'
 import * as vscode from 'vscode'
 
@@ -113,15 +113,18 @@ export class PineDocString {
    * Reads the selected code in the editor and generates the appropriate docstring.
    */
   async docstring(): Promise<void> {
-    const editor = VSCode.ActivePineFile
-    if (!editor) {
-      return
+    const activeEditor = vscode.window.activeTextEditor;
+    // Replaced VSCode.ActivePineFile
+    if (!activeEditor || activeEditor.document.languageId !== 'pine' || activeEditor.document.uri.scheme !== 'file') {
+      return;
     }
-    const selection = VSCode?.Selection
+
+    const selection = activeEditor.selection; // Replaced VSCode?.Selection
     if (!selection) {
       return
     }
-    const code = VSCode?.SelectedText || ''
+    // Replaced VSCode?.SelectedText
+    const code = activeEditor.document.getText(selection) || ''
 
     let finishedDocstring: string | undefined
 
@@ -152,7 +155,7 @@ export class PineDocString {
     }
 
     // Replace the selected text with the new docstring followed by the original code
-    VSCode.Editor?.edit((editBuilder) => {
+    activeEditor.edit((editBuilder) => { // Replaced VSCode.Editor?.edit
       editBuilder.replace(selection, `${finishedDocstring}\n${code}`)
     })
   }

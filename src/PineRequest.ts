@@ -1,4 +1,4 @@
-import { VSCode } from './index'
+// import { VSCode } from './index'; // Removed
 import * as vscode from 'vscode'
 import { Class } from './PineClass'
 
@@ -53,7 +53,7 @@ export class PineRequest {
     // Initialize a new URLSearchParams object
     const formData = new URLSearchParams()
     // Get the text of the active document
-    let body = VSCode.Text
+    let body = vscode.window.activeTextEditor?.document.getText(); // Replaced VSCode.Text
     // Define the options for the request
     const requestOptions: {
       method: string
