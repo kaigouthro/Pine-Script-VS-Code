@@ -258,29 +258,50 @@ export class PineCompletionService {
       return completions
     }
 
-    const udtMap = this.docsManager.getMap('UDT', 'types') // UDT definitions are in these maps
+    const constructorName = `${potentialUdtName}.new`
 
-    const udtDoc = udtMap.get(potentialUdtName)
+    // Query PineDocsManager for functions/methods that match `potentialUdtName.new`
+    // These maps might contain `UDTName.new` as a direct function entry.
+    const constructorCandidateMaps = this.docsManager.getMap(
+      'functions',
+      'completionFunctions', // As per plan, might contain UDT.new
+      'methods2', // As per plan, might contain UDT.new
+      // 'methods' // Typically for instance methods, but check just in case if structure varies
+    )
 
-    // Suggest 'new()' if the part before the dot is a known UDT name
-    // The user might type 'MyType.' and we suggest 'new()'.
-    // Or user might type 'MyType.ne' and we still suggest 'new()', filtered by the provider if needed,
-    // or perhaps this service should check if 'new' matches `partialNameAfterDot` if it existed?
-    // Original code only triggered if match ends with '.', suggesting 'new()' only when typing `MyType.`.
-    // Let's stick to suggesting 'new()' only when the match is `UdtName.`.
-    // The provider can filter this if the user types something like `MyType.ne`.
-    if (udtDoc) {
+    const constructorDoc = constructorCandidateMaps.get(constructorName)
+
+    if (constructorDoc) {
+      // Found a specific doc for `UDTName.new`
       completions.push({
-        name: 'new()', // The text to insert/suggest
-        doc: udtDoc, // Link to the UDT documentation
-        namespace: potentialUdtName, // The UDT name is the "namespace" for the constructor
-        kind: 'Constructor', // Define a kind for constructors
-        description: udtDoc?.desc || `Creates a new instance of \`${potentialUdtName}\`.`, // Use UDT desc or default
-        // If the doc structure includes constructor args, add them here.
-        // For now, assume basic 'new()' signature.
+        name: 'new()', // Suggest "new()" for completion
+        doc: constructorDoc, // The raw rich object for `potentialUdtName.new`
+        namespace: potentialUdtName, // The UDT name
+        kind: constructorDoc.kind || 'Constructor', // Use kind from doc or default to 'Constructor'
+        description: constructorDoc.desc || `Creates a new instance of \`${potentialUdtName}\`.`,
+        // constructorDoc should ideally contain its own `args` if it's a full function definition
       })
+    } else {
+      // Fallback: If `UDTName.new` is not found as a direct function entry,
+      // check if `potentialUdtName` is a known UDT and provide a generic `new()`
+      // This maintains previous behavior if the detailed `.new` entry isn't in function maps.
+      const udtMap = this.docsManager.getMap('UDT', 'types')
+      const udtDefinitionDoc = udtMap.get(potentialUdtName)
+      if (udtDefinitionDoc) {
+        // We don't have a specific doc for `.new` itself, but we know the UDT exists.
+        // Create a basic CompletionDoc for `new()`.
+        // The `doc` here will be the UDT's own documentation.
+        // SignatureHelp, when resolving `MyType.new`, would then use `getFunctionDocs`
+        // which has its own fallback to build a constructor object from UDT fields/args.
+        completions.push({
+          name: 'new()',
+          doc: udtDefinitionDoc, // Doc of the UDT itself as a fallback
+          namespace: potentialUdtName,
+          kind: 'Constructor',
+          description: udtDefinitionDoc.desc || `Creates a new instance of \`${potentialUdtName}\`.`,
+        })
+      }
     }
-
     return completions
   }
 
@@ -572,24 +593,44 @@ export class PineCompletionService {
     }
 
     // Check UDTs for constructor (.new)
+    // Priority: Check if `UDTName.new` exists as a direct function/method entry first.
     if (searchName.endsWith('.new')) {
+      // Attempt to find `UDTName.new` directly in function/method maps
+      // This is because `UDTName.new` might be listed as a function with its own args.
+      if (functionMap.has(searchName)) {
+        return functionMap.get(searchName)
+      }
+      if (methodMap.has(searchName)) {
+        // This case might be less common for .new, but check for completeness
+        return methodMap.get(searchName)
+      }
+
+      // Fallback: If `UDTName.new` is not a direct entry, look for the UDT itself
+      // and construct the constructor representation.
       const udtName = searchName.slice(0, -'.new'.length)
-      const udtMap = this.docsManager.getMap('UDT', 'types')
+      const udtMap = this.docsManager.getMap('UDT', 'types') // Added 'types' as per original
       const udtDoc = udtMap.get(udtName)
       if (udtDoc) {
-        // Return the UDT doc, potentially augmenting it to signify constructor
-        // The structure needed by Signature Help might be specific.
-        // For now, just return the UDT doc. Signature Help needs args list.
-        // Assuming UDT doc has an `args` property for the constructor, or it's derived from fields/syntax.
-        return { ...udtDoc, name: `${udtName}.new`, kind: 'Constructor', args: udtDoc.args || [] } // Ensure args is an array
+        // Construct the constructor doc. Prioritize `udtDoc.args` if available for constructor args,
+        // then `udtDoc.fields` as a fallback.
+        const constructorArgs = udtDoc.args || udtDoc.fields || []
+        return {
+          ...udtDoc, // Spread the original UDT properties
+          name: searchName, // Ensure the name is `UDTName.new`
+          kind: 'Constructor', // Explicitly set kind to Constructor
+          args: constructorArgs, // Use determined args
+          // desc: udtDoc.desc || `Constructor for ${udtName}`, // Optional: ensure description is relevant
+        }
       }
     }
 
-    // Add checks for namespaced functions in 'functions' map if they exist there (unlikely, but possible)
-    // Example: math.abs might be in functions map as 'math.abs'
-    if (searchName.includes('.')) {
-      const funcDoc = functionMap.get(searchName)
-      if (funcDoc) return funcDoc
+    // Add checks for namespaced functions in 'functions' map if they exist there
+    // This was already present but good to confirm it's after the .new check for direct UDTName.new hits
+    if (searchName.includes('.') && functionMap.has(searchName)) {
+      // This check is somewhat redundant if searchName was already checked against functionMap,
+      // unless searchName was modified (e.g. from UDT.new logic path).
+      // However, if searchName is not a .new type, this is the primary check for namespaced functions.
+      return functionMap.get(searchName)
     }
 
     return undefined // Not found
