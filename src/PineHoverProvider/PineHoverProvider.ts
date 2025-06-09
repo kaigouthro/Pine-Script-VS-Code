@@ -1,4 +1,5 @@
-import * as vscode from 'vscode'
+import * as vscode from 'vscode';
+import { PineAnnotationParser, ParsedDocumentation } from '../PineAnnotationParser';
 import { PineDocsManager } from '../PineDocsManager'
 import { PineHoverHelpers } from './PineHoverHelpers'
 import { PineHoverBuildMarkdown } from './PineHoverBuildMarkdown'
@@ -43,7 +44,16 @@ export class PineHoverProvider implements vscode.HoverProvider {
     // Set the current document
     this.document = document
     this.position = position
-    this.mapArrayMatrix = ''
+    this.mapArrayMatrix = '';
+
+    const wordRangeAtPosition = this.document.getWordRangeAtPosition(position);
+    if (wordRangeAtPosition) {
+        const hoveredWord = this.document.getText(wordRangeAtPosition);
+        const annotationHover = await this._tryAnnotationHover(hoveredWord, wordRangeAtPosition);
+        if (annotationHover) {
+            return annotationHover;
+        }
+    }
 
     const lineRange = document.getWordRangeAtPosition(position, /(\S+)/)
     // If there's no word at the given position, return undefined
@@ -62,6 +72,87 @@ export class PineHoverProvider implements vscode.HoverProvider {
 
     return await this.getFirstTruthyHover();
   }
+
+  private _getCommentsAboveLine(lineNumber: number): string[] {
+    const comments: string[] = [];
+    let currentLine = lineNumber - 1;
+    while (currentLine >= 0) {
+      const lineText = this.document.lineAt(currentLine).text.trim();
+      if (lineText.startsWith('//')) {
+        // Remove '// ' or '//' and trim
+        comments.unshift(lineText.substring(2).trimStart());
+      } else {
+        break; // Stop if a non-comment line is encountered
+      }
+      currentLine--;
+    }
+    return comments;
+  }
+
+  private async _tryAnnotationHover(hoveredWord: string, wordRange: vscode.Range): Promise<vscode.Hover | undefined> {
+    const funcDefRegex = new RegExp(`^(?:export\\s+)?(?:method\\s+)?(?:function\\s+)?(${hoveredWord})\\s*\\(([^)]*)\\)\\s*=>`);
+    const udtDefRegex = new RegExp(`^(?:export\\s+)?type\\s+(${hoveredWord})\\s*`);
+    const enumDefRegex = new RegExp(`^(?:export\\s+)?enum\\s+(${hoveredWord})\\s*\\{`);
+
+    for (let i = 0; i < this.document.lineCount; i++) {
+      const lineText = this.document.lineAt(i).text;
+
+      const funcMatch = lineText.match(funcDefRegex);
+      const udtMatch = lineText.match(udtDefRegex);
+      const enumMatch = lineText.match(enumDefRegex);
+
+      let definitionType: 'function' | 'UDT' | 'enum' | undefined;
+      let extractedSyntax: string = hoveredWord;
+      let docKey: string = hoveredWord; // The actual name captured by the regex
+
+      if (funcMatch) {
+        definitionType = 'function';
+        extractedSyntax = `${funcMatch[1] || hoveredWord}(${funcMatch[2] || ''})`;
+        docKey = funcMatch[1];
+      } else if (udtMatch) {
+        definitionType = 'UDT';
+        extractedSyntax = udtMatch[1] || hoveredWord;
+        docKey = udtMatch[1];
+      } else if (enumMatch) {
+        definitionType = 'enum';
+        extractedSyntax = enumMatch[1] || hoveredWord;
+        docKey = enumMatch[1];
+      }
+
+      if (definitionType && docKey === hoveredWord) {
+        const commentLines = this._getCommentsAboveLine(i);
+        if (commentLines.length > 0) {
+          const parsedAnnotations = PineAnnotationParser.parse(commentLines);
+
+          if (parsedAnnotations) {
+            const annotationDocs = {
+              syntax: extractedSyntax,
+              desc: parsedAnnotations.mainDescription || '',
+              info: parsedAnnotations.mainDescription || '', // Often same as desc
+              args: parsedAnnotations.params?.map(p => ({
+                name: p.name,
+                info: `${p.description || ''} (${p.type || 'any'})`,
+                type: p.type || 'any',
+                required: !(p.name.endsWith('?') || (p.description && p.description.toLowerCase().includes('[optional]')))
+              })) || [],
+              fields: parsedAnnotations.fields?.map(f => ({
+                name: f.name,
+                info: `${f.description || ''} (${f.type || 'any'})`,
+                type: f.type || 'any',
+              })) || [],
+              returnedType: parsedAnnotations.returns ? `${parsedAnnotations.returns.description || ''} (${parsedAnnotations.returns.type || 'any'})` : '',
+              kind: definitionType,
+            };
+            // Use 'function' as default regexId if definitionType is somehow undefined, though it shouldn't be here.
+            const markdown = await this.createHoverMarkdown(annotationDocs as any, hoveredWord, undefined, definitionType || 'function');
+            return new vscode.Hover(markdown, wordRange);
+          }
+        }
+      }
+    }
+    return undefined;
+  }
+
 
   /** This function produces an array of hover functions.
    * @param {number} num - The number of the hover function to provide.
