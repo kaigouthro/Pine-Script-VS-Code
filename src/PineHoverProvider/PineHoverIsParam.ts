@@ -1,6 +1,5 @@
 import * as vscode from 'vscode'
 import { PineDocsManager } from '../PineDocsManager'
-import { VSCode } from '../VSCode'
 import { Helpers } from '../PineHelpers'
 
 /**
@@ -40,7 +39,7 @@ export class PineHoverParam {
    */
   public async isParam(): Promise<[any | undefined, string | undefined, undefined] | undefined> {
     try {
-      this.line = VSCode.LineText(this.wordRange.start.line)
+      this.line = vscode.window.activeTextEditor?.document.lineAt(this.wordRange.start.line).text
       if (!this.line) {
         return
       }

@@ -1,5 +1,4 @@
 import * as vscode from 'vscode'
-import { VSCode } from './VSCode'
 
 export class PineUserInputs {
   // private readonly SESSION_ID_KEY = 'session_id'
@@ -26,19 +25,19 @@ export class PineUserInputs {
   async setUsername(username: string | undefined = undefined) {
     if (await this.getUsername()) {
       await this.secrets.delete(this.USERNAME_KEY)
-      VSCode.Window.showInformationMessage('Pine: Username cleared')
+      vscode.window.showInformationMessage('Pine: Username cleared')
       return
     }
     if (!username) {
-      username = await VSCode.Window.showInputBox({
+      username = await vscode.window.showInputBox({
         prompt: 'Pine: Enter your username',
       })
     }
     if (username) {
       await this.secrets.store(this.USERNAME_KEY, username)
-      VSCode.Window.showInformationMessage('Pine: Username saved')
+      vscode.window.showInformationMessage('Pine: Username saved')
     } else {
-      VSCode.Window.showInformationMessage('Pine: No Username Provided')
+      vscode.window.showInformationMessage('Pine: No Username Provided')
     }
   }
 
@@ -60,16 +59,16 @@ export class PineUserInputs {
 
 // async setSessionId(sessionId: string | undefined = undefined) {
 //   if (!sessionId) {
-//     sessionId = await VSCode.Window.showInputBox({
+//     sessionId = await vscode.window.showInputBox({
 //       prompt: 'Pine: Enter your session ID',
 //       password: true,
 //     })
 //   }
 //   if (sessionId) {
 //     await this.secrets.store(this.SESSION_ID_KEY, sessionId)
-//     VSCode.Window.showInformationMessage('Pine: Session ID saved')
+//     vscode.window.showInformationMessage('Pine: Session ID saved')
 //   } else {
-//     VSCode.Window.showInformationMessage('Pine: No SessionId Provided')
+//     vscode.window.showInformationMessage('Pine: No SessionId Provided')
 //   }
 // }
 
@@ -77,7 +76,7 @@ export class PineUserInputs {
 //   try {
 //     // await this.secrets.delete(this.SESSION_ID_KEY)
 //     await this.secrets.delete(this.USERNAME_KEY)
-//     VSCode.Window.showInformationMessage('Pine: All info cleared')
+//     vscode.window.showInformationMessage('Pine: All info cleared')
 //   } catch (error) {
 //     console.warn(`Error in clearAllInfo: ${error}`);
 //   }

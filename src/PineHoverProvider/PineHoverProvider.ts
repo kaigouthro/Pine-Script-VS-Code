@@ -5,7 +5,6 @@ import { PineHoverBuildMarkdown } from './PineHoverBuildMarkdown'
 import { PineHoverMethod } from './PineHoverIsMethod'
 import { PineHoverFunction } from './PineHoverIsFunction'
 import { PineHoverParam } from './PineHoverIsParam'
-import { VSCode } from '../VSCode'
 // import { PineConsole } from '../PineConsole'
 
 export class PineHoverProvider implements vscode.HoverProvider {
@@ -33,7 +32,8 @@ export class PineHoverProvider implements vscode.HoverProvider {
     CancellationToken: vscode.CancellationToken,
   ): Promise<vscode.Hover | undefined> {
     // Check if the document is valid
-    if (!VSCode.isPineFile()) {
+    const editor = vscode.window.activeTextEditor
+    if (!(editor && editor.document.languageId === 'pine' && editor.document.uri.scheme === 'file')) {
       return
     }
     // not implemented yet

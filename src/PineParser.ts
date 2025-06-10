@@ -1,6 +1,6 @@
 import { Class } from './index'
 import { Helpers } from './PineHelpers'
-import { VSCode } from './VSCode'
+import * as vscode from 'vscode'
 
 export class PineParser {
   changes: number | undefined
@@ -61,7 +61,8 @@ export class PineParser {
    * It retrieves document text and then parses functions and types.
    */
   parseDoc() {
-    const editorDoc = VSCode.Text?.replace(/\r\n/g, '\n') ?? ''
+    const editor = vscode.window.activeTextEditor
+    const editorDoc = editor?.document.getText()?.replace(/\r\n/g, '\n') ?? ''
     if (!editorDoc) {
       return // Guard clause: No document content to parse
     }
