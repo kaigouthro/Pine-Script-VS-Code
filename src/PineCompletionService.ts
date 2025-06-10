@@ -643,58 +643,99 @@ export class PineCompletionService {
    */
   getFunctionDocs(name: string): any | undefined {
     if (!name) {
-      return undefined
+      return undefined;
     }
 
-    // Normalize name for lookup (e.g., remove trailing ())
-    const searchName = name.replace(/\(\)$/, '') // Remove () if present
+    const searchName = name.replace(/\(\)$/, ''); // Remove () if present
 
-    // 1. Check `functions2` (primary source for functions and UDT constructors from PineFormatResponse)
-    //    and `completionFunctions` (often similar or supplementary).
-    //    `PineFormatResponse` now puts UDT constructors (like `MyType.new`) here.
-    let funcDoc = this.docsManager.getMap('functions2', 'completionFunctions').get(searchName)
+    // 1. Check `functions`, `functions2`, `completionFunctions` maps first.
+    //    These maps might contain explicitly defined functions by a linter,
+    //    including UDT constructors formatted as regular functions (e.g., "MyType.new").
+    let funcDoc = this.docsManager.getMap('functions', 'functions2', 'completionFunctions').get(searchName);
     if (funcDoc) {
-      // Ensure 'args' is always an array, even if missing or null in source
-      funcDoc.args = Array.isArray(funcDoc.args) ? funcDoc.args : []
-      return funcDoc
-    }
-
-    // 2. Check `methods2` (primary source for methods from PineFormatResponse)
-    //    Methods are often namespaced, e.g., "array.push".
-    funcDoc = this.docsManager.getMap('methods2').get(searchName)
-    if (funcDoc) {
-      funcDoc.args = Array.isArray(funcDoc.args) ? funcDoc.args : []
-      return funcDoc
-    }
-
-    // 3. Fallback for UDT constructors if not found as a direct function entry (less likely with new format)
-    //    This part of the logic might become less relevant if `PineFormatResponse` reliably puts all `.new` in `functions`.
-    if (searchName.endsWith('.new')) {
-      const udtName = searchName.slice(0, -'.new'.length)
-      const udtDoc = this.docsManager.getMap('UDT').get(udtName) // Check the main 'UDT' map
-      if (udtDoc) {
-        // Synthesize a constructor-like doc from the UDT definition
-        // The `args` for the constructor should ideally come from the `MyType.new` entry in `functions`,
-        // but if that wasn't found, we might infer from UDT fields or provide an empty args list.
-        return {
-          ...udtDoc, // Spread UDT properties like name, libId, desc
-          name: searchName, // Ensure the name is the constructor name "MyType.new"
-          kind: 'Constructor', // Explicitly set kind
-          args:
-            udtDoc.args ||
-            (udtDoc.fields
-              ? udtDoc.fields.map((f: any) => ({ name: f.name, type: f.type, desc: f.desc, required: false }))
-              : []), // Use existing args or infer from fields
-          returnedTypes: [udtName], // Constructor returns an instance of the UDT
+      funcDoc.args = Array.isArray(funcDoc.args) ? funcDoc.args : [];
+      if (!funcDoc.kind) { // Set kind if not already defined by linter
+        if (searchName.endsWith('.new')) {
+          funcDoc.kind = 'Constructor';
+        } else if (!searchName.includes('.')) {
+          funcDoc.kind = 'Function';
+        } else {
+          // If it has a dot but isn't .new, it's likely a namespaced function/method.
+          // This path is less likely if methods are primarily in method maps.
+          funcDoc.kind = 'Method';
         }
       }
+      return funcDoc;
     }
 
-    // If still not found, it might be a very generic built-in or not documented in the new detailed format yet.
-    // The original getFunctionDocs also checked 'functions' (old global functions) and 'methods' (old global methods).
-    // If these maps are still populated with relevant data not covered by functions2/methods2, consider adding them.
-    // For now, focusing on the new primary data sources.
+    // 2. If not found as a regular function AND it's a ".new" syntax,
+    //    attempt to synthesize its signature from a UDT definition.
+    if (searchName.endsWith('.new')) {
+      const udtName = searchName.slice(0, -'.new'.length);
+      // UDTs are typically in 'UDT' map, but 'types' can also be a source.
+      const udtDoc = this.docsManager.getMap('UDT', 'types').get(udtName);
 
-    return undefined // Not found
+      if (udtDoc && Array.isArray(udtDoc.fields)) { // Ensure udtDoc exists and has fields
+        const constructorArgs = udtDoc.fields.map((field: any) => {
+          // A field is considered required if it does not have a default value.
+          const isRequired = field.default === undefined || field.default === null;
+          return {
+            name: field.name,
+            type: field.type || 'any', // Default to 'any' if type is missing
+            displayType: field.type || 'any', // For now, displayType is same as type
+            desc: field.desc || `Field ${field.name}.`, // Default description if missing
+            default: field.default, // The default value itself
+            required: isRequired,
+            // isConst: field.isConst, // Store if needed for docs, not a typical arg property
+          };
+        });
+
+        // Synthesize a syntax string for display, e.g., "MyUDT.new(field1: type, field2: type = defaultVal)"
+        const argsString = constructorArgs
+            .map((arg: any) => {
+                let argStr = `${arg.name}: ${arg.type}`;
+                if (arg.default !== undefined && arg.default !== null) {
+                    // Handle string defaults needing quotes if not already quoted by parser
+                    if (typeof arg.default === 'string' && !(arg.default.startsWith("'") && arg.default.endsWith("'")) && !(arg.default.startsWith('"') && arg.default.endsWith('"'))) {
+                        argStr += ` = '${arg.default.replace(/'/g, "\\'")}'`; // Proper single quote escaping
+                    } else {
+                        argStr += ` = ${arg.default}`;
+                    }
+                }
+                return argStr;
+            })
+            .join(', ');
+        const synthesizedSyntax = `${searchName}(${argsString})`;
+
+        return {
+          name: searchName, // Full name like "MyUDT.new"
+          kind: 'Constructor',
+          desc: udtDoc.desc || `Constructs a new instance of ${udtName}.`, // UDT's main description
+          args: constructorArgs,
+          returnTypes: [udtName], // Constructor returns an instance of the UDT
+          libId: udtDoc.libId, // Library ID if the UDT is from a library
+          syntax: synthesizedSyntax, // The generated syntax string
+          originalName: udtDoc.originalName ? `${udtDoc.originalName}.new` : searchName, // Original name of the UDT for reference
+        };
+      }
+      // If udtDoc or udtDoc.fields is not found, this path won't return, allowing fallback to method maps.
+    }
+
+    // 3. Check `methods`, `methods2` maps if not found yet.
+    //    This primarily catches actual methods but could also include ".new" if defined as a method.
+    funcDoc = this.docsManager.getMap('methods', 'methods2').get(searchName);
+    if (funcDoc) {
+      funcDoc.args = Array.isArray(funcDoc.args) ? funcDoc.args : [];
+      if (!funcDoc.kind) { // Set kind if not already defined
+        if (searchName.endsWith('.new')) {
+          funcDoc.kind = 'Constructor';
+        } else {
+          funcDoc.kind = 'Method';
+        }
+      }
+      return funcDoc;
+    }
+
+    return undefined; // Not found in any map or synthesis path
   }
 }
