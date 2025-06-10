@@ -48,6 +48,13 @@ export class PineHoverBuildMarkdown {
         case 'annotation':
             syntax = `${key}`;
             break;
+        case 'localVariable': // New case for local variables
+            syntax = `(local) ${key}: ${typeInfo}`;
+            break;
+        case 'parameter': // New case for parameters
+            const parentFunction = keyedDocs?.parentFunction ? `${keyedDocs.parentFunction}.` : '';
+            syntax = `(parameter) ${parentFunction}${key}: ${typeInfo}`;
+            break;
         case 'function':
         case 'method':
             let paramsString = "";

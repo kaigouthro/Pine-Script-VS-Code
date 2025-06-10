@@ -1,0 +1,192 @@
+//@version=5
+indicator("Hover Test Suite", overlay=true, description = "A collection of snippets for testing hover functionality.")
+
+// --- Global Variables ---
+// Simple types
+int g_int = 10
+var g_int_var = 10
+varip g_int_varip = 10 // varip is similar to var but re-evaluates on every tick for intrabars
+string g_string = "hello"
+float g_float = 3.14
+bool g_bool = true
+color g_color = color.new(color.blue, 0)
+plotshape g_plotshape = na // type plotshape
+hline g_hline = hline(close) // type hline
+line g_line = line.new(bar_index, close, bar_index + 1, open) // type line
+label g_label = label.new(bar_index, high, "Label") // type label
+table g_table = table.new(position.top_right, 1, 1) // type table
+
+// Qualifiers
+simple int g_simple_int = 1 // simple qualifier (historical data context)
+literal int g_literal_int = 1 // literal qualifier (compile-time constant)
+const g_const_int = 42
+const string g_const_string = "const_string"
+input int g_input_int = 20, title = "Input Integer"
+input bool g_input_bool = false, title = "Input Boolean"
+series float g_series_float = close
+series color g_series_color = color.green
+
+// Arrays
+array<int> g_array_int = array.new_int(5, 0)
+array<float> g_array_float = array.new<float>(2)
+array<string> g_array_string = array.from("a", "b", "c")
+
+// Matrices
+matrix<float> g_matrix_float = matrix.new<float>(2, 2, 0.0)
+matrix<int> g_matrix_int = matrix.identity<int>(3)
+
+// --- User-Defined Types (UDTs) ---
+// UDT Definition
+type Point
+    float x
+    float y
+    string id = "default_id"
+    float method calculateMagnitude() => math.sqrt(x*x + y*y)
+    string method getDetails(string prefix) => prefix + ": " + id + " @ (" + str.tostring(x, "#.##") + ", " + str.tostring(y, "#.##") + ")"
+
+// UDT Instantiation
+Point g_point_a = Point.new(1.0, 2.0)
+var Point g_point_b = Point.new(3.0, 4.0, "pointB") // with optional field
+
+// --- Enum Definitions ---
+// Enum Definition
+enum Trend
+    UP, DOWN, NEUTRAL
+
+// --- User-Defined Functions ---
+// Simple function
+string g_udf_simple(string name, int count) =>
+    string local_greeting = "Hello, " + name // Local variable
+    for i = 0 to count - 1 // i is a local variable in for loop scope
+        local_greeting := local_greeting + "!"
+    local_greeting
+
+// Function with UDT, array, enum parameters and complex return
+[Point, array<string>] g_udf_complex(Point p, array<int> ids, Trend current_trend) =>
+    Point p_offset = Point.new(p.x + 10, p.y + 10, p.id + "_offset") // Local UDT variable
+    array<string> id_strings = array.new_string(array.size(ids))
+    for i = 0 to array.size(ids) - 1
+        string current_id_str = str.tostring(array.get(ids, i)) // Local string
+        array.set(id_strings, i, p.id + "_" + current_id_str + "_" + str.tostring(current_trend))
+    if current_trend == Trend.UP
+        int local_block_var = 1 // Variable in local block
+        p_offset.x := p_offset.x + local_block_var
+    else if current_trend == Trend.DOWN
+        int local_block_var = -1 // Variable in local block (same name, different scope)
+        p_offset.x := p_offset.x + local_block_var
+    [p_offset, id_strings]
+
+
+// --- Function/Method Calls & Usages ---
+// Call to User-Defined Functions
+string greeting_result = g_udf_simple("Tester", 3)
+var Point result_point = na
+var array<string> result_strings = na
+[result_point, result_strings] = g_udf_complex(g_point_a, g_array_int, Trend.UP)
+
+// Calls to Built-in Functions
+float abs_val = math.abs(-5.0)
+float sma_val = ta.sma(close, 14)
+float pow_val = math.pow(2, 3)
+int year_val = year(timenow)
+
+// Method Calls on Built-in Types
+int arr_size = array.size(g_array_int)
+int first_val = array.get(g_array_int, 0)
+array.push(g_array_int, 100)
+int matrix_rows = matrix.rows(g_matrix_float)
+float matrix_val = matrix.get(g_matrix_float, 0, 0)
+string upper_str = str.toupper(g_string)
+int str_len = string.length(g_string) // Example, though string.length isn't a Pine method
+
+// Access to UDT Fields
+float point_x = g_point_a.x
+string point_id = g_point_b.id
+
+// Calls to UDT Methods
+float magnitude = g_point_a.calculateMagnitude()
+string details = g_point_b.getDetails("INFO")
+
+// Usage of Enum Members
+Trend current_market_trend = Trend.NEUTRAL
+bool is_up_trend = current_market_trend == Trend.UP
+
+// Usage of Built-in Constants
+color red_color = color.red
+color transp_blue = color.new(color.blue, 80)
+plot(close, style=plot.style_circles, color=color.yellow) // plot.style_circles
+hline(0, "Zero Line", color=color.gray, linestyle=hline.style_dotted) // hline.style_dotted
+
+// Usage of Built-in Type Names in Declarations
+int i_decl = 0
+float f_decl = 0.0
+string s_decl = ""
+bool b_decl = false
+var my_custom_line = line.new(na,na,na,na) // line type usage
+var my_point_var = Point.new(0,0) // Point type usage
+
+// --- Plotting ---
+plot(sma_val, title="SMA")
+plotchar(close > open, title="Green Day", char='▲', color=color.green)
+
+// --- Local Scopes Example ---
+var int g_scoped_test_result = 0
+if (g_bool)
+    int if_block_var = 100 // Variable in if block
+    g_scoped_test_result += if_block_var
+    if (g_int > 5)
+        int nested_if_var = 50 // Variable in nested if block
+        g_scoped_test_result += nested_if_var
+// for_block_var is not accessible here
+// if_block_var is not accessible here
+// nested_if_var is not accessible here
+
+for j_loop = 0 to 2 // j_loop is a local variable for the loop
+    g_scoped_test_result += j_loop
+
+// End of script
+// Test Annotation hover: //@version=5 (at the top)
+// Test Annotation hover: //@description (at the top)
+// Test Annotation hover: //indicator(...) title attribute "Hover Test Suite"
+// Test Annotation hover: //input(...) title attribute "Input Integer"
+
+// Test parameter hover: name in `g_udf_simple(string name, int count)`
+// Test parameter hover: count in `g_udf_simple(string name, int count)`
+// Test parameter hover: p in `g_udf_complex(Point p, array<int> ids, Trend current_trend)`
+// Test parameter hover: ids in `g_udf_complex(Point p, array<int> ids, Trend current_trend)`
+// Test parameter hover: current_trend in `g_udf_complex(Point p, array<int> ids, Trend current_trend)`
+
+// Test local var hover: local_greeting in `g_udf_simple`
+// Test local var hover: i in `g_udf_simple` loop
+// Test local var hover: p_offset in `g_udf_complex`
+// Test local var hover: id_strings in `g_udf_complex`
+// Test local var hover: current_id_str in `g_udf_complex` loop
+// Test local var hover: local_block_var in `g_udf_complex` if block
+// Test local var hover: local_block_var in `g_udf_complex` else if block
+// Test local var hover: if_block_var in the `if (g_bool)` block
+// Test local var hover: nested_if_var in the `if (g_int > 5)` block
+// Test local var hover: j_loop in the `for j_loop` block
+pine_script_code_for_testing_hover_functionality = 1 // dummy assignment for script to be valid
+// End of script
+// Test Annotation hover: //@version=5 (at the top)
+// Test Annotation hover: //@description (at the top)
+// Test Annotation hover: //indicator(...) title attribute "Hover Test Suite"
+// Test Annotation hover: //input(...) title attribute "Input Integer"
+
+// Test parameter hover: name in `g_udf_simple(string name, int count)`
+// Test parameter hover: count in `g_udf_simple(string name, int count)`
+// Test parameter hover: p in `g_udf_complex(Point p, array<int> ids, Trend current_trend)`
+// Test parameter hover: ids in `g_udf_complex(Point p, array<int> ids, Trend current_trend)`
+// Test parameter hover: current_trend in `g_udf_complex(Point p, array<int> ids, Trend current_trend)`
+
+// Test local var hover: local_greeting in `g_udf_simple`
+// Test local var hover: i in `g_udf_simple` loop
+// Test local var hover: p_offset in `g_udf_complex`
+// Test local var hover: id_strings in `g_udf_complex`
+// Test local var hover: current_id_str in `g_udf_complex` loop
+// Test local var hover: local_block_var in `g_udf_complex` if block
+// Test local var hover: local_block_var in `g_udf_complex` else if block
+// Test local var hover: if_block_var in the `if (g_bool)` block
+// Test local var hover: nested_if_var in the `if (g_int > 5)` block
+// Test local var hover: j_loop in the `for j_loop` block
+pine_script_code_for_testing_hover_functionality = 1 // dummy assignment for script to be valid
