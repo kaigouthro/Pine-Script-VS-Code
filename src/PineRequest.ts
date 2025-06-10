@@ -92,7 +92,7 @@ export class PineRequest {
    */
   async lint(): Promise<any> {
     try {
-      const url = `${this.pineUrl}translate_light?user_name=Guest&pine_id=00000000-0000-0000-0000-000000000000`
+      const url = `${this.pineUrl}translate_light?user_name=Guest&v=3`
       const response = await this.request('POST', url)
       if (response && response?.result) {
         return response
