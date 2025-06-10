@@ -9,11 +9,17 @@ jest.mock('./PineClass', () => {
     return {
         __esModule: true,
         Class: {
-            ...actualPineClass.Class,
-            PineRequest: {
+            ...actualPineClass.Class, // Spreads actual static members/getters
+            PineRequest: { // Specific mock for PineRequest
                 libList: jest.fn().mockResolvedValue([]),
                 getScript: jest.fn().mockResolvedValue({ source: '' }),
             },
+            // Explicitly mock PineDocsManager getter to return an object with a setParsed mock method
+            get PineDocsManager() {
+                return {
+                    setParsed: jest.fn(),
+                };
+            }
         },
     };
 });

@@ -10,20 +10,73 @@ export class PineParser {
   parsedLibsUDT: any = {}
 
   // Refactored regular expressions with named capture groups for better readability and maintainability
-  // Type Definition Pattern
-  typePattern: RegExp =
-    /(?<udtGroup>(?<annotationsGroup>(?:^\/\/\s*(?:@(?:type|field|enum)[^\n]*\n))+)?(?<exportKeyword>export)?\s*(?<keyword>type|enum)\s*(?<name>\w+)\n(?<fieldsGroup>(?:(?:\s+[^\n]+)\n+|\s*\n)*?))(?=(?:\b|^\/\/\s*@|(?:^\/\/[^@\n]*?$)+|$))/gm
 
-  // Fields Pattern within Type Definition (for UDTs)
+  /**
+   * Type Definition Pattern
+   * Parses User-Defined Types (UDTs) and Enums.
+   * - udtGroup: The overall capture for a type or enum definition.
+   * - annotationsGroup: Captures block annotations like `//@type`, `//@field`, `//@enum`.
+   * - exportKeyword: Captures the optional `export` keyword.
+   * - keyword: Captures `type` or `enum`.
+   * - name: The UDT or enum name (e.g., `MyType`, `MyEnum`).
+   * - fieldsGroup: Captures the body/content of the UDT or enum (members/fields).
+   * - Lookahead `(?=(?:\b|^\/\/\s*@|(?:^\/\/[^@\n]*?$)+|$))`: Defines the end of the UDT/enum block.
+   *   It stops parsing the current block when it encounters:
+   *     - A word boundary on a new line (signaling start of new, unrelated code or end of file context).
+   *     - A new `@` annotation line (e.g., `//@function`, `//@type`).
+   *     - A comment line that does not start with an `@` annotation.
+   *     - The end of the file/string.
+   */
+  typePattern: RegExp =
+    /(?<udtGroup>(?<annotationsGroup>(?:^\/\/\s*(?:@(?:type|field|enum)[^\n]*\n))+)?(?<exportKeyword>export)?\s*(?<keyword>type|enum)\s*(?<name>\w+)\n(?<fieldsGroup>(?:(?:\s+[^\n]+(?:\n+|$))|\s*\n)*?))(?=(?:\b|^\/\/\s*@|(?:^\/\/[^@\n]*?$)+|$))/gm
+
+  /**
+   * Fields Pattern (within Type Definition for UDTs)
+   * Parses individual field lines within a User-Defined Type (UDT).
+   * Key parts:
+   * - Optional `const` keyword.
+   * - Type detection:
+   *   - Handles simple types (e.g., `int`, `float`, `string`, `bool`, `color`).
+   *   - Handles generic types like `array<type>`, `array<type,type>`, `matrix<type>`, `map<keyType,valueType>`.
+   *     - `genericType1`, `genericType2`: Capture generic parameters.
+   *   - `fieldType`: Captures the base type if not a collection type.
+   *   - `isArray`: Captures `[]` for array shorthand.
+   * - `fieldName`: The name of the field.
+   * - Optional default value detection:
+   *   - `defaultValueSingleQuote`, `defaultValueDoubleQuote`: String defaults.
+   *   - `defaultValueNumber`: Numeric defaults (integers, floats, scientific notation).
+   *   - `defaultValueColor`: Color literal defaults (e.g., `#FF0000`).
+   *   - `defaultValueIdentifier`: Identifier defaults (e.g., `na`, `true`, another const variable).
+   */
   fieldsPattern: RegExp =
     /^\s+(?<isConst>const\s+)?(?:(?:(?:(array|matrix|map)<(?<genericTypes>(?<genericType1>([a-zA-Z_][a-zA-Z_0-9]*\.)?([a-zA-Z_][a-zA-Z_0-9]*)),)?(?<genericType2>([a-zA-Z_][a-zA-Z_0-9]*\.)?([a-zA-Z_][a-zA-Z_0-9]*)))>)|(?<fieldType>([a-zA-Z_][a-zA-Z_0-9]*\.)?([a-zA-Z_][a-zA-Z_0-9]*))((?<isArray>\[\])?)\s+)?(?<fieldName>[a-zA-Z_][a-zA-Z0-9_]*)(?:(?=\s*=\s*)(?:(?<defaultValueSingleQuote>'.*')|(?<defaultValueDoubleQuote>".*")|(?<defaultValueNumber>\d*(\.(\d+[eE]?\d+)?\d*|\d+))|(?<defaultValueColor>#[a-fA-F0-9]{6,8})|(?<defaultValueIdentifier>([a-zA-Z_][a-zA-Z_0-9]*\.)*[a-zA-Z_][a-zA-Z0-9_]*)))?$/gm
 
-  // Enum Member Pattern
+  // Enum Member Pattern (Relatively simple, inline comments suffice)
+  // Captures:
+  // - memberAnnotations: Comments directly above the member.
+  // - memberName: The name of the enum member.
+  // - memberValue: Optional value assigned to the enum member.
   enumMemberPattern: RegExp = /^\s*(?<memberAnnotations>(?:\/\/\s*.*\n\s*)*)?(?<memberName>\w+)(?:\s*=\s*(?<memberValue>.*?))?\s*(?:,|$)/gm
 
-  // Function Definition Pattern
+  /**
+   * Function Definition Pattern
+   * Parses function definitions, including user-defined functions and methods.
+   * - docstring: Captures function documentation comments starting with `//@function` or `//@f`.
+   * - exportKeyword: Captures the optional `export` keyword.
+   * - methodKeyword: Captures the optional `method` keyword (for UDT methods).
+   * - functionName: Captures simple (e.g., `myFunc`) or dot-separated names (e.g., `MyType.new`, `namespace.myFunc`).
+   * - parameters: Captures the content within the function's parentheses (arguments).
+   * - body: Captures the function body (code after `=>`).
+   * - Lookahead `(?=^\b|^\/\/\s*\@|$)`: Defines the end of the function block.
+   *   It stops parsing the current block when it encounters:
+   *     - A word boundary on a new line (signaling start of new, unrelated code or end of file context).
+   *     - A new `@` annotation line (e.g., `//@function`, `//@type`).
+   *     - The end of the file/string.
+   *   (Note: `\b` on a new line `^\b` is a bit unusual; typically `^` implies start of line, and `\b` would be for word boundaries.
+   *    The intent is likely to stop before new top-level definitions or significant comment blocks.)
+   */
   funcPattern: RegExp =
-    /(?<docstring>(?:\/\/\s*@f(?:@?.*\n)+?)?)?(?<exportKeyword>export)?\s*(?<methodKeyword>method)?\s*(?<functionName>\w+)\s*\(\s*(?<parameters>[^\)]+?)\s*\)\s*?=>\s*?(?<body>(?:.*\n+)+?)(?=^\b|^\/\/\s*\@|$)/gm
+    /(?<docstring>(?:\/\/\s*@f(?:@?.*\n)+?)?)?(?<exportKeyword>export)?\s*(?<methodKeyword>method)?\s*(?<functionName>\w+(?:\.\w+)*)\s*\(\s*(?<parameters>[^\)]*?)\s*\)\s*?=>\s*?(?<body>(?:(?:.*)(?:\n+|$))+?)(?=^\b|^\/\/\s*@|$)/gm
 
   // Function Argument Pattern
   funcArgPattern: RegExp =
