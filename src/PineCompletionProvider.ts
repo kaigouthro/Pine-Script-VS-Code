@@ -1,7 +1,9 @@
-import { Helpers, PineSharedCompletionState } from './index'
-import { Class } from './PineClass'
-import * as vscode from 'vscode'
-import { CompletionDoc } from './PineCompletionService' // PineCompletionService itself is no longer instantiated here
+import { Helpers, PineSharedCompletionState } from './index';
+import { Class } from './PineClass';
+import * as vscode from 'vscode';
+import { CompletionDoc } from './PineCompletionService';
+import { ParsedType, PineTypify } from './PineTypify'; // Import ParsedType and PineTypify
+import { VSCode } from './VSCode'; // Import project's VSCode wrapper
 
 export class PineCompletionProvider implements vscode.CompletionItemProvider {
   // private pineCompletionService: PineCompletionService // Removed
@@ -54,22 +56,98 @@ export class PineCompletionProvider implements vscode.CompletionItemProvider {
     token: vscode.CancellationToken,
   ): Promise<vscode.CompletionItem[] | vscode.CompletionList | null | undefined> {
     try {
-      // Initialize the completion items array
-      this.completionItems = []
+      this.completionItems = [];
+      const linePrefix = document.lineAt(position.line).text.substring(0, position.character);
 
-      const completionsFromState: Record<string, any>[] = this.checkCompletions()
+      // Regexes for different call patterns
+      // UDT Constructor: Group 1: UDT Name (potentially with Lib), Group 2: typed args
+      const udtConstructorRegex = /(\b[a-zA-Z_][\w\.]*)\.new\(\s*([^)]*)$/;
+      // Method Call: Group 1: Variable, Group 2: Method Name, Group 3: typed args
+      const methodCallRegex = /(\b[a-zA-Z_]\w*)\.(\w+)\(\s*([^)]*)$/;
+      // Function Call: Group 1: Function Name (potentially with Lib), Group 2: typed args
+      const functionCallRegex = /(?<!\bnew\s|\bif\s|\bfor\s|\bwhile\s|\.)(\b[a-zA-Z_][\w\.]*)\(\s*([^)]*)$/;
 
+      let symbolInfo: any = null;
+      let symbolNameForArgs: string | null = null;
+
+      const udtMatch = linePrefix.match(udtConstructorRegex);
+      if (udtMatch) {
+        const udtName = udtMatch[1];
+        symbolNameForArgs = `${udtName}.new`;
+        symbolInfo = Class.PineDocsManager.getFunctionDocs(symbolNameForArgs);
+      } else {
+        const methodMatch = linePrefix.match(methodCallRegex);
+        if (methodMatch) {
+          const varName = methodMatch[1];
+          const methodName = methodMatch[2];
+
+          const lintResponse = typeof (VSCode as any).Linter?.getLintResponse === 'function'
+            ? (VSCode as any).Linter.getLintResponse()
+            : undefined;
+          const variableTypeInfo = lintResponse?.variables?.find((v: {name: string, type: string}) => v.name === varName)?.type;
+          if (variableTypeInfo) {
+            symbolNameForArgs = `${variableTypeInfo}.${methodName}`;
+            symbolInfo = Class.PineDocsManager.getFunctionDocs(symbolNameForArgs);
+          }
+          // Attempt 2: If type resolution fails or method not found, try finding method by its name alone (for built-ins on global types)
+          if (!symbolInfo) {
+            symbolNameForArgs = methodName; // e.g. join (if it was a method of a common type like array)
+            // This might need PineDocsManager to store methods like "array.join" and be able to find "join" if it's unambiguously an array method.
+            // For now, getFunctionDocs would need to be smart or method names unique.
+             symbolInfo = Class.PineDocsManager.getFunctionDocs(methodName); // Less reliable without type context
+          }
+
+        } else {
+          const funcMatch = linePrefix.match(functionCallRegex);
+          if (funcMatch) {
+            symbolNameForArgs = funcMatch[1];
+            symbolInfo = Class.PineDocsManager.getFunctionDocs(symbolNameForArgs);
+          }
+        }
+      }
+
+      if (symbolInfo && symbolInfo.args && Array.isArray(symbolInfo.args)) {
+        // Ensure cursor is within parentheses for argument completion
+        const openParenIndex = linePrefix.lastIndexOf('(');
+        const closeParenIndex = linePrefix.lastIndexOf(')');
+        if (openParenIndex !== -1 && (closeParenIndex === -1 || openParenIndex > closeParenIndex || position.character > openParenIndex) ) {
+          // Cursor is likely within parameters list
+          const formattedArgs = symbolInfo.args.map((arg: any) => ({
+            name: arg.name + '=', // Standard format for named args
+            desc: arg.desc,
+            kind: 'Parameter',
+            type: arg.type || arg.displayType, // Prioritize parser's type
+            required: arg.required,
+            default: arg.default,
+            libraryOrigin: symbolInfo.libraryOrigin, // Pass parent's library origin
+            doc: arg, // Keep original arg object for createCompletionItem
+          }));
+
+          PineSharedCompletionState.setCompletions(formattedArgs); // Assuming this takes an array
+          PineSharedCompletionState.setArgumentCompletionsFlag(true);
+          // setActiveArg might need to be set based on comma count or parser state,
+          // but argumentCompletions itself might handle filtering based on already typed args.
+          // For now, setting the flag and completions is the main goal.
+          // The activeArg is set by the signatureHelpProvider usually.
+          // Here we force argument completion mode.
+        }
+      }
+
+      // Now, check shared state (which might have been populated above or by SignatureHelpProvider)
+      const completionsFromState: Record<string, any>[] = this.checkCompletions();
       if (token.isCancellationRequested) {
+        return [];
       }
 
       if (completionsFromState.length > 0) {
-        return await this.argumentCompletions(document, position, completionsFromState)
+        return await this.argumentCompletions(document, position, completionsFromState);
       } else {
-        return await this.mainCompletions(document, position)
+        // If no argument context was matched and populated, proceed to main completions
+        return await this.mainCompletions(document, position);
       }
     } catch (error) {
-      console.error(error)
-      return []
+      console.error(error);
+      return [];
     }
   }
 
@@ -120,42 +198,50 @@ export class PineCompletionProvider implements vscode.CompletionItemProvider {
       label = isMethod ? `${namespace}.${label.split('.').pop()}` : label
       label = label + openParen + closeParen
 
-      // Use doc.description from CompletionDoc, fallback to doc.doc.desc if needed by checkDesc
-      let mainDescription = Helpers.formatUrl(Helpers?.checkDesc(doc.description || doc.doc?.desc))
+      // Use doc.description from CompletionDoc (summary), and doc.doc.desc for detailed description from parser
+      let mainDescription = Helpers.formatUrl(Helpers?.checkDesc(doc.description || doc.doc?.desc || doc.doc?.doc));
 
-      // Enhance documentation for functions/methods with args
+      // Library origin for detail
+      const libraryOrigin = doc.doc?.libraryOrigin ? ` (from ${doc.doc.libraryOrigin})` : '';
+      let itemDetail = (kind ?? '') + libraryOrigin;
+
+      // Enhance documentation and detail based on kind
       let argsDocumentation = "";
-      if (doc.doc && (doc.doc.kind?.includes('Function') || doc.doc.kind?.includes('Method')) && doc.doc.args && Array.isArray(doc.doc.args)) {
-        argsDocumentation += "\n\n**Parameters:**\n";
-        doc.doc.args.forEach((arg: any) => {
-          argsDocumentation += `* \`${arg.name}\` (${arg.displayType || 'any'}): ${Helpers.checkDesc(arg.desc) || 'No description.'}${arg.required ? " (required)" : ""}\n`;
-        });
+      if (doc.doc && (kind?.includes('Function') || kind?.includes('Method'))) {
+        if (doc.doc.args && Array.isArray(doc.doc.args)) {
+          argsDocumentation += "\n\n**Parameters:**\n";
+          doc.doc.args.forEach((arg: any) => {
+            argsDocumentation += `* \`${arg.name}\` (${arg.type || arg.displayType || 'any'}): ${Helpers.checkDesc(arg.desc) || 'No description.'}${arg.required ? " (required)" : ""}\n`;
+          });
+          let paramsShort = doc.doc.args.map((arg: any) => `${arg.name}: ${arg.type || arg.displayType || 'any'}`).join(', ');
+          itemDetail = `${kind} (${paramsShort})${libraryOrigin}`;
+        }
+      } else if (doc.doc && kind === 'Field') {
+        // Detail for UDT fields: "field <type> of <UDTName>"
+        // Assuming parent UDT name might be part of 'namespace' or needs to be passed differently.
+        // For now, use doc.doc.type.
+        itemDetail = `field ${doc.doc.type || ''}${libraryOrigin}`;
+        // mainDescription would be doc.doc.desc (description of the field itself)
+      } else if (doc.doc && kind === 'EnumMember') {
+        // Detail for Enum members: "member of <EnumName>"
+        // Assuming parent Enum name might be part of 'namespace'.
+        // mainDescription would be doc.doc.desc (description of the enum member)
+        itemDetail = `member${libraryOrigin}`; // Add more specific parent enum if available
+      } else if (doc.doc && kind === 'User Export Type' || kind === 'User Type' || kind === 'Enum') {
+        // For UDTs or Enums themselves, the mainDescription is their overall doc.
+        // itemDetail is already set to kind + libraryOrigin
       }
-      // For UDT fields or Enum members, their description is usually in doc.doc.desc
-      else if (doc.doc && (doc.doc.kind?.includes('Field') || doc.doc.kind?.includes('EnumMember')) && doc.doc.desc) {
-        // mainDescription is already populated with doc.doc.desc through Helpers.checkDesc
-      }
+
 
       const fullDocumentation = new vscode.MarkdownString(mainDescription + argsDocumentation);
-      fullDocumentation.appendCodeblock(modifiedSyntax, 'pine');
+      // If doc.doc.syntax is available (e.g. from PineParser for user functions), use it. Otherwise, formatSyntax.
+      const finalSyntax = doc.doc?.syntax || modifiedSyntax;
+      fullDocumentation.appendCodeblock(finalSyntax, 'pine');
 
-      // Determine the kind of the completion item
-      // Pass doc.doc (original doc object) to determineCompletionItemKind for docDetails
       const itemKind = await this.determineCompletionItemKind(kind, doc.doc)
-      // Create a new CompletionItem object
       const completionItem = new vscode.CompletionItem(label, itemKind)
       completionItem.documentation = fullDocumentation
-      const detail = kind ?? ''
-      // Enhance detail for functions/methods with a more concise signature
-      if (doc.doc && (doc.doc.kind?.includes('Function') || doc.doc.kind?.includes('Method'))) {
-        let paramsShort = "";
-        if (doc.doc.args && Array.isArray(doc.doc.args)) {
-          paramsShort = doc.doc.args.map((arg: any) => `${arg.name}: ${arg.displayType || 'any'}`).join(', ');
-        }
-        completionItem.detail = `${kind} (${paramsShort})`;
-      } else {
-        completionItem.detail = detail
-      }
+      completionItem.detail = itemDetail;
 
       // Use a snippet string for the insert text
       let insertText = label
@@ -210,57 +296,65 @@ export class PineCompletionProvider implements vscode.CompletionItemProvider {
     try {
       // If the kind is not specified, return Text as the default kind
       if (!kind) {
-        return vscode.CompletionItemKind.Text
+        return vscode.CompletionItemKind.Text;
       }
 
-      // Check for const fields first (potential enum members) based on docDetails
-      if (docDetails?.isConst && kind?.toLowerCase().includes('field')) {
-        return vscode.CompletionItemKind.EnumMember
-      }
-
-      // Define a mapping from item types to completion item kinds
-      const kinds: any = {
+      // Specific kind mappings from PineParser
+      const kindMapping: { [key: string]: vscode.CompletionItemKind } = {
+        // User Defined (from PineParser)
         'User Export Function': vscode.CompletionItemKind.Function,
         'User Method': vscode.CompletionItemKind.Method,
         'User Function': vscode.CompletionItemKind.Function,
-        'User Export Type': vscode.CompletionItemKind.Class,
-        'User Type': vscode.CompletionItemKind.Class,
-        Function: vscode.CompletionItemKind.Function,
-        Method: vscode.CompletionItemKind.Method,
-        Local: vscode.CompletionItemKind.Module,
-        Imported: vscode.CompletionItemKind.Module,
-        Integer: vscode.CompletionItemKind.Value,
-        Color: vscode.CompletionItemKind.Color,
-        Control: vscode.CompletionItemKind.Keyword,
-        Variable: vscode.CompletionItemKind.Variable,
-        Boolean: vscode.CompletionItemKind.EnumMember,
-        Constant: vscode.CompletionItemKind.Constant,
-        Type: vscode.CompletionItemKind.Class,
-        Annotation: vscode.CompletionItemKind.Reference,
-        Property: vscode.CompletionItemKind.Property,
-        Parameter: vscode.CompletionItemKind.TypeParameter,
-        Field: vscode.CompletionItemKind.Field,
-        Enum: vscode.CompletionItemKind.Enum,
-        EnumMember: vscode.CompletionItemKind.EnumMember,
-        'Literal String': vscode.CompletionItemKind.Text, // For "" string literals
-        Other: vscode.CompletionItemKind.Value,
+        'User Export Type': vscode.CompletionItemKind.Class, // UDTs
+        'User Type': vscode.CompletionItemKind.Class,    // UDTs
+        'User Export Enum': vscode.CompletionItemKind.Enum,
+        'User Enum': vscode.CompletionItemKind.Enum,
+        'Field': vscode.CompletionItemKind.Field,         // UDT Field
+        'EnumMember': vscode.CompletionItemKind.EnumMember, // Enum Member
+        'Parameter': vscode.CompletionItemKind.TypeParameter, // Function/Method Parameter
+
+        // Built-ins / Others (can be refined)
+        'Function': vscode.CompletionItemKind.Function,
+        'Method': vscode.CompletionItemKind.Method,
+        'Local': vscode.CompletionItemKind.Module,
+        'Imported': vscode.CompletionItemKind.Module,
+        'Integer': vscode.CompletionItemKind.Value,
+        'Float': vscode.CompletionItemKind.Value, // Added Float
+        'String': vscode.CompletionItemKind.Text, // Added String for variables/constants
+        'Color': vscode.CompletionItemKind.Color,
+        'Control': vscode.CompletionItemKind.Keyword,
+        'Variable': vscode.CompletionItemKind.Variable,
+        'Boolean': vscode.CompletionItemKind.EnumMember, // true/false often act like enum members
+        'Constant': vscode.CompletionItemKind.Constant, // PineScript constants (e.g. plot.style_area)
+        'Type': vscode.CompletionItemKind.Class, // Built-in types like 'array', 'matrix'
+        'Annotation': vscode.CompletionItemKind.Reference,
+        'Property': vscode.CompletionItemKind.Property, // e.g. line.get_price
+        'Other': vscode.CompletionItemKind.Value,
+        'Literal String': vscode.CompletionItemKind.Text,
+      };
+
+      if (kindMapping[kind]) {
+        return kindMapping[kind];
       }
 
-      // For each key in the mapping, if the kind includes the key, return the corresponding completion item kind
-      // Check for exact match first, then .includes()
-      const lowerKind = kind.toLowerCase()
-      for (const key in kinds) {
-        if (lowerKind === key.toLowerCase()) {
-          return kinds[key]
-        }
+      // Fallback for const fields that might be enum-like but not explicitly "EnumMember" kind
+      if (docDetails?.isConst && kind?.toLowerCase().includes('field')) {
+        return vscode.CompletionItemKind.EnumMember;
       }
-      for (const key in kinds) {
-        if (lowerKind.includes(key.toLowerCase())) {
-          return kinds[key]
-        }
-      }
-      // If no matching key is found, return Text as the default kind
-      return vscode.CompletionItemKind.Text
+
+      // General fallback based on keywords if exact match failed
+      const lowerKind = kind.toLowerCase();
+      if (lowerKind.includes('function')) return vscode.CompletionItemKind.Function;
+      if (lowerKind.includes('method')) return vscode.CompletionItemKind.Method;
+      if (lowerKind.includes('class') || lowerKind.includes('type')) return vscode.CompletionItemKind.Class;
+      if (lowerKind.includes('enum') && !lowerKind.includes('member')) return vscode.CompletionItemKind.Enum;
+      if (lowerKind.includes('member')) return vscode.CompletionItemKind.EnumMember;
+      if (lowerKind.includes('field')) return vscode.CompletionItemKind.Field;
+      if (lowerKind.includes('variable')) return vscode.CompletionItemKind.Variable;
+      if (lowerKind.includes('constant')) return vscode.CompletionItemKind.Constant;
+      if (lowerKind.includes('module')) return vscode.CompletionItemKind.Module;
+
+      return vscode.CompletionItemKind.Text;
     } catch (error) {
       console.error(error)
       return vscode.CompletionItemKind.Text
@@ -295,43 +389,221 @@ export class PineCompletionProvider implements vscode.CompletionItemProvider {
       }
 
       const linePrefix = line.text.substring(0, position.character)
-      // If there's no text before the cursor, return an empty array
-      if (!linePrefix) {
-        return []
-      }
-      // If there are no completions in the shared state, match the text before the cursor
-      const match = linePrefix.match(/[\w.]+$/)?.[0].trim()
-      if (!match) {
-        return []
+      if (!linePrefix) return [];
+
+      const dotAccessMatch = linePrefix.match(/([\w\.\[\]\(\)]+)\.$/); // Updated regex to include [] and () for array/map access or function calls if needed by resolver
+
+      if (dotAccessMatch) {
+        const expressionBeforeDot = dotAccessMatch[1];
+        const finalResolvedType = await this.resolveExpressionType(expressionBeforeDot);
+
+        if (finalResolvedType) {
+          let typeToGetFieldsFrom = finalResolvedType;
+          let udtNamespaceForDisplay = expressionBeforeDot; // Default namespace for display
+
+          // If the resolved type is an array or matrix, get its element type
+          if ((typeToGetFieldsFrom.containerType === 'array' || typeToGetFieldsFrom.containerType === 'matrix') && typeToGetFieldsFrom.elementType) {
+            typeToGetFieldsFrom = typeToGetFieldsFrom.elementType;
+            // Adjust namespace to reflect the element type context if possible, though expressionBeforeDot is often fine.
+            // udtNamespaceForDisplay = typeToGetFieldsFrom.lib ? `${typeToGetFieldsFrom.lib}.${typeToGetFieldsFrom.baseType}` : typeToGetFieldsFrom.baseType;
+          }
+          // If it's a map, consider if we want to provide methods for map or fields of valueType (more complex)
+          // For now, focusing on UDTs and element types of arrays/matrices if they are UDTs.
+
+          const udtFullName = typeToGetFieldsFrom.lib
+            ? `${typeToGetFieldsFrom.lib}.${typeToGetFieldsFrom.baseType}`
+            : typeToGetFieldsFrom.baseType;
+
+          // Check if typeToGetFieldsFrom is a UDT by trying to get its definition
+          const udtDefinition = Class.PineDocsManager.getMap('UDT').get(udtFullName);
+          if (udtDefinition && udtDefinition.fields && Array.isArray(udtDefinition.fields)) {
+            for (const field of udtDefinition.fields) {
+              const completionDoc: CompletionDoc = {
+                name: field.name,
+                kind: 'Field',
+                description: field.desc,
+                // Pass full UDT def libraryOrigin, and specific field type for doc.doc
+                doc: { ...field, libraryOrigin: udtDefinition.libraryOrigin, type: field.type },
+                isMethod: false,
+                namespace: udtNamespaceForDisplay, // The expression that results in this UDT
+              };
+              const item = await this.createCompletionItem(document, field.name, udtNamespaceForDisplay, completionDoc, position, false);
+              if (item) this.completionItems.push(item);
+            }
+            if (this.completionItems.length > 0) {
+              return new vscode.CompletionList(this.completionItems, true);
+            }
+          }
+        }
+
+        // Attempt Enum Member Completions if UDT field resolution didn't yield results for the original expressionBeforeDot
+        // This is because expressionBeforeDot could be a direct Enum name like "MyLib.MyEnum"
+        const enumDefinition = Class.PineDocsManager.getMap('enums').get(expressionBeforeDot);
+        if (enumDefinition && enumDefinition.members && Array.isArray(enumDefinition.members)) {
+          for (const member of enumDefinition.members) {
+            const completionDoc: CompletionDoc = {
+              name: member.name,
+              kind: 'EnumMember',
+              description: member.desc,
+              doc: { ...member, libraryOrigin: enumDefinition.libraryOrigin },
+              isMethod: false,
+              namespace: expressionBeforeDot,
+            };
+            const item = await this.createCompletionItem(document, member.name, expressionBeforeDot, completionDoc, position, false);
+            if (item) this.completionItems.push(item);
+          }
+          if (this.completionItems.length > 0) {
+            return new vscode.CompletionList(this.completionItems, true);
+          }
+        }
+
+        // If dotAccessMatch was true, but we found no specific UDT fields or Enum Members,
+        // try to get general method/property completions for the expressionBeforeDot (e.g., for string methods, array methods)
+        if (this.completionItems.length === 0) { // Only if no UDT/Enum completions were found
+            const serviceCompletions = Class.pineCompletionService.getMethodCompletions(expressionBeforeDot);
+            for (const completionDoc of serviceCompletions) {
+                const item = await this.createCompletionItem(document, completionDoc.name, completionDoc.namespace, completionDoc, position, false);
+                if (item) this.completionItems.push(item);
+            }
+            if (this.completionItems.length > 0) {
+                return new vscode.CompletionList(this.completionItems, true);
+            }
+        }
       }
 
-      const allCompletions: CompletionDoc[] = []
-      allCompletions.push(...Class.pineCompletionService.getGeneralCompletions(match))
-      allCompletions.push(...Class.pineCompletionService.getMethodCompletions(match))
-      allCompletions.push(...Class.pineCompletionService.getUdtConstructorCompletions(match))
-      allCompletions.push(...Class.pineCompletionService.getInstanceFieldCompletions(match))
+      // General completions (if not a dot access or if dot access yielded no specific UDT/Enum/Method results)
+      const generalMatch = linePrefix.match(/[\w.]+$/)?.[0].trim();
+      if (!generalMatch && !dotAccessMatch) {
+        return [];
+      }
 
-      for (const completionDoc of allCompletions) {
-        const vscodeCompletionItem = await this.createCompletionItem(
-          document,
-          completionDoc.name, // This is correct, completionDoc.name is the specific name
-          completionDoc.namespace, // Correct
-          completionDoc, // Pass the whole CompletionDoc object as the 'doc' argument
-          position,
-          false,
-        )
-        if (vscodeCompletionItem) {
-          this.completionItems.push(vscodeCompletionItem)
+      // This block will now primarily handle non-dot-access scenarios,
+      // or serve as a final fallback if dot-access didn't populate anything (though the new block above for methods should handle most dot cases).
+      if (generalMatch) {
+        const allServiceCompletions: CompletionDoc[] = [];
+        if (!dotAccessMatch) { // Only add general completions if not a dot-access context at all
+            allServiceCompletions.push(...Class.pineCompletionService.getGeneralCompletions(generalMatch));
+        }
+        // Add method and constructor completions. These might be relevant if generalMatch is a partial name of one.
+        // For dot access, method completions are now handled above. If it wasn't a dot access, this is fine.
+        if (!dotAccessMatch) { // Avoid redundant method completions if already handled by dot-access fallback
+            allServiceCompletions.push(...Class.pineCompletionService.getMethodCompletions(generalMatch));
+        }
+        allServiceCompletions.push(...Class.pineCompletionService.getUdtConstructorCompletions(generalMatch));
+
+        for (const completionDoc of allServiceCompletions) {
+          const vscodeCompletionItem = await this.createCompletionItem(
+            document,
+            completionDoc.name,
+            completionDoc.namespace,
+            completionDoc,
+            position,
+            false,
+          );
+          if (vscodeCompletionItem) {
+            this.completionItems.push(vscodeCompletionItem);
+          }
         }
       }
 
       if (this.completionItems.length > 0) {
-        return new vscode.CompletionList(this.completionItems, true)
+        return new vscode.CompletionList(this.completionItems, true);
       }
+      return []; // Ensure always returns something if no items pushed
     } catch (error) {
       console.error(error)
-      return []
+      return [];
     }
+  }
+
+  /**
+   * Resolves the type of a potentially nested expression (e.g., var1.fieldA.nestedField).
+   * @param expression The expression string.
+   * @returns A Promise resolving to the ParsedType of the final part of the expression, or null.
+   */
+  async resolveExpressionType(expression: string): Promise<ParsedType | null> {
+    const parts = expression.split('.');
+    if (parts.length === 0) {
+      return null;
+    }
+
+    let baseExpressionPart = parts[0];
+    let currentType: ParsedType | null;
+
+    const indexAccessMatch = baseExpressionPart.match(/^([a-zA-Z_]\w*)(\[.*\])$/);
+
+    if (indexAccessMatch) {
+      const varName = indexAccessMatch[1];
+      // Assuming Class might have a static instance property like 'pineTypifyInstance'
+      const varType = await (Class as any).pineTypifyInstance?.getVariableType(varName);
+      if (varType) {
+        if ((varType.containerType === 'array' || varType.containerType === 'matrix') && varType.elementType) {
+          currentType = varType.elementType;
+        } else if (varType.containerType === 'map' && varType.valueType) {
+          currentType = varType.valueType;
+        } else {
+          currentType = null;
+        }
+      } else {
+        currentType = null;
+      }
+    } else {
+      currentType = await (Class as any).pineTypifyInstance?.getVariableType(baseExpressionPart);
+    }
+
+    // If the first part itself (after potential index stripping) is not resolved, try parsing it as a direct type name (e.g. MyLib.MyType)
+    // This helps if `expression` is like `MyLib.MyType.staticFieldOrMethod` (though static fields aren't typical in Pine UDTs this way)
+    // or if `expressionBeforeDot` in `mainCompletions` was an Enum name like `MyLib.MyEnum`.
+    // However, `mainCompletions` already handles direct Enum name lookups.
+    // This resolver is best for `variable.field...` chains.
+    if (!currentType && parts.length === 1 && !indexAccessMatch) { // Only try to parse as type if it's a single part and not an array access
+        // This might be a direct UDT name like "someLib.MyType" that isn't a variable.
+        // This path is less common for field access which usually starts with a variable.
+        // currentType = Class.pineTypify.parseType(baseExpressionPart); // This could be problematic if baseExpressionPart is just "myVar"
+    }
+
+
+    if (!currentType) {
+      return null;
+    }
+
+    // Loop for subsequent parts (field access)
+    for (let i = 1; i < parts.length; i++) {
+      if (!currentType) return null;
+
+      const fieldName = parts[i];
+
+      // If currentType is an array or matrix, we cannot directly access UDT fields on it.
+      // Field access like '.length' would be handled by general method/property completions, not here.
+      if (currentType.containerType === 'array' || currentType.containerType === 'matrix' || currentType.containerType === 'map') {
+        // This means we have something like `myArray.someField` or `myMap.someField`.
+        // If `someField` is not a built-in property/method of array/map, this path is invalid for UDT field resolution.
+        // Built-in properties (like length) or methods (like .get() for map, .join() for array)
+        // are typically not stored as "fields" in the UDT sense.
+        // The mainCompletions will call pineCompletionService for these.
+        return null;
+      }
+
+      const udtLookupName = currentType.lib
+        ? `${currentType.lib}.${currentType.baseType}`
+        : currentType.baseType;
+
+      const udtDef = Class.PineDocsManager.getMap('UDT').get(udtLookupName);
+      if (!udtDef || !udtDef.fields || !Array.isArray(udtDef.fields)) {
+        return null; // Not a known UDT or has no fields
+      }
+
+      const fieldInfo = udtDef.fields.find((f: any) => f.name === fieldName);
+      if (!fieldInfo || !fieldInfo.type) {
+        return null; // Field not found or field has no type string
+      }
+
+      currentType = PineTypify.parseType(fieldInfo.type); // Use static PineTypify.parseType
+      if (!currentType || currentType.baseType === 'unknown') {
+          return null;
+      }
+    }
+    return currentType;
   }
 
   /**

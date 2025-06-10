@@ -12,11 +12,14 @@ export class PineParser {
   // Refactored regular expressions with named capture groups for better readability and maintainability
   // Type Definition Pattern
   typePattern: RegExp =
-    /(?<udtGroup>(?<annotationsGroup>(?:^\/\/\s*(?:@(?:type|field)[^\n]*\n))+)?(?<udtExportKeyword>export)?\s*(type)\s*(?<typeName>\w+)\n(?<fieldsGroup>(?:(?:\s+[^\n]+)\n+|\s*\n)+))(?=(?:\b|^\/\/\s*@|(?:^\/\/[^@\n]*?$)+|$))/gm
+    /(?<udtGroup>(?<annotationsGroup>(?:^\/\/\s*(?:@(?:type|field|enum)[^\n]*\n))+)?(?<exportKeyword>export)?\s*(?<keyword>type|enum)\s*(?<name>\w+)\n(?<fieldsGroup>(?:(?:\s+[^\n]+)\n+|\s*\n)*?))(?=(?:\b|^\/\/\s*@|(?:^\/\/[^@\n]*?$)+|$))/gm
 
-  // Fields Pattern within Type Definition
+  // Fields Pattern within Type Definition (for UDTs)
   fieldsPattern: RegExp =
     /^\s+(?<isConst>const\s+)?(?:(?:(?:(array|matrix|map)<(?<genericTypes>(?<genericType1>([a-zA-Z_][a-zA-Z_0-9]*\.)?([a-zA-Z_][a-zA-Z_0-9]*)),)?(?<genericType2>([a-zA-Z_][a-zA-Z_0-9]*\.)?([a-zA-Z_][a-zA-Z_0-9]*)))>)|(?<fieldType>([a-zA-Z_][a-zA-Z_0-9]*\.)?([a-zA-Z_][a-zA-Z_0-9]*))((?<isArray>\[\])?)\s+)?(?<fieldName>[a-zA-Z_][a-zA-Z0-9_]*)(?:(?=\s*=\s*)(?:(?<defaultValueSingleQuote>'.*')|(?<defaultValueDoubleQuote>".*")|(?<defaultValueNumber>\d*(\.(\d+[eE]?\d+)?\d*|\d+))|(?<defaultValueColor>#[a-fA-F0-9]{6,8})|(?<defaultValueIdentifier>([a-zA-Z_][a-zA-Z_0-9]*\.)*[a-zA-Z_][a-zA-Z0-9_]*)))?$/gm
+
+  // Enum Member Pattern
+  enumMemberPattern: RegExp = /^\s*(?<memberAnnotations>(?:\/\/\s*.*\n\s*)*)?(?<memberName>\w+)(?:\s*=\s*(?<memberValue>.*?))?\s*(?:,|$)/gm
 
   // Function Definition Pattern
   funcPattern: RegExp =
@@ -141,8 +144,10 @@ export class PineParser {
       if (this.parsedLibsFunctions?.[lib.alias] || this.parsedLibsUDT?.[lib.alias]) {
         continue // Skip if already parsed
       }
-      this.parseFunctions([lib]) // Parse each lib individually
-      this.parseTypes([lib])
+      // Pass lib.id as libId, and lib.alias as alias
+      const docPayload = { script: lib.script, alias: lib.alias, libId: lib.id };
+      this.parseFunctions([docPayload]); // Parse each lib individually
+      this.parseTypes([docPayload]);
     }
   }
 
@@ -163,16 +168,16 @@ export class PineParser {
    * Extracts function name, arguments, and body using regex.
    * @param documents - An array of documents to parse, each with a 'script' property.
    */
-  parseFunctions(documents: any[]) {
+  parseFunctions(documents: any[]): any[] { // Added explicit return type
     if (!Array.isArray(documents)) {
       console.error('parseFunctions: Documents must be an array, received:', documents)
-      return // Guard clause: Validate documents input
+      return []; // Return empty array for invalid input
     }
 
     const parsedFunctions: any[] = []
 
     for (const doc of documents) {
-      const { script, alias } = doc
+      const { script, alias, libId } = doc // libId might be undefined for non-library docs
       if (typeof script !== 'string') {
         console.warn('parseFunctions: Script is not a string, skipping:', script)
         continue // Guard clause: Skip non-string scripts
@@ -191,6 +196,7 @@ export class PineParser {
           body: body,
           doc: docstring, // Store the captured docstring
           kind: 'User Function', // Add a specific kind for user-defined functions
+          libraryOrigin: libId || alias || '', // Prefer libId, fallback to alias
         }
 
         if (exportKeyword) {
@@ -257,10 +263,19 @@ export class PineParser {
         parsedFunctions.push(functionBuild)
       }
       if (alias) {
-        this.parsedLibsFunctions[alias] = parsedFunctions
+        // Store all functions parsed from this alias (library)
+        this.parsedLibsFunctions[alias] = (this.parsedLibsFunctions[alias] || []).concat(parsedFunctions.filter(fn => fn.libraryOrigin === alias));
       }
     }
-    Class.PineDocsManager.setParsed(parsedFunctions, 'args')
+    // Pass all collected functions from all documents/aliases to PineDocsManager
+    // This assumes PineDocsManager can handle functions from multiple origins in one call.
+    // If parseFunctions is called per-document (which it is), then parsedFunctions here will only contain funcs from that doc.
+    // The accumulation for parsedLibsFunctions[alias] is correct if parseFunctions is called per-library.
+    // The final call to setParsed should ideally happen after all documents/libs are processed,
+    // or PineDocsManager.setParsed needs to be additive or handle individual document scopes.
+    // Given current structure, setParsed is called after each document.
+    // Class.PineDocsManager.setParsed(parsedFunctions, 'args') // Refactored to return
+    return parsedFunctions; // TEMPORARY REFACTOR FOR TESTING
   }
 
   /**
@@ -268,16 +283,16 @@ export class PineParser {
    * Extracts type name and fields using regex.
    * @param documents - An array of documents to parse, each with a 'script' property.
    */
-  parseTypes(documents: any[]) {
+  parseTypes(documents: any[]): { udts: any[], enums: any[] } { // Added explicit return type
     if (!Array.isArray(documents)) {
       console.error('parseTypes: Documents must be an array, received:', documents)
-      return // Guard clause: Validate documents input
+      return { udts: [], enums: [] }; // Return empty arrays for invalid input
     }
 
     const parsedTypes: any[] = []
 
     for (const doc of documents) {
-      const { script, alias } = doc
+      const { script, alias, libId } = doc // libId might be undefined
       if (typeof script !== 'string') {
         console.warn('parseTypes: Script is not a string, skipping:', script)
         continue // Guard clause: Skip non-string scripts
@@ -286,81 +301,178 @@ export class PineParser {
       const typeMatches = script.matchAll(this.typePattern)
 
       for (const typeMatch of typeMatches) {
-        const { annotationsGroup, udtExportKeyword, typeName, fieldsGroup } = typeMatch.groups!
+        const { annotationsGroup, exportKeyword, keyword, name: typeOrEnumName, fieldsGroup } = typeMatch.groups!
+        const prefixedName = (alias ? alias + '.' : '') + typeOrEnumName
 
-        const name = (alias ? alias + '.' : '') + typeName
-
-        const typeBuild: any = {
-          name: name,
-          fields: [],
-          originalName: typeName,
-          kind: 'User Type', // Assign kind
-          doc: annotationsGroup || '', // Store docstring
-        }
-
-        if (udtExportKeyword) {
-          typeBuild.export = true
-          typeBuild.kind = 'User Export Type' // More specific kind
-        }
-
-        if (fieldsGroup) {
-          const fieldMatches = fieldsGroup.matchAll(this.fieldsPattern)
-          for (const fieldMatch of fieldMatches) {
-            const {
-              genericTypes,
-              isConst, // New capture group
-              genericType1,
-              genericType2,
-              fieldType,
-              isArray,
-              fieldName,
-              defaultValueSingleQuote,
-              defaultValueDoubleQuote,
-              defaultValueNumber,
-              defaultValueColor,
-              defaultValueIdentifier,
-            } = fieldMatch.groups!
-
-            let resolvedFieldType = genericTypes
-              ? `${fieldMatch[1] /* array|matrix|map */}<${genericType1 || ''}${
-                  genericType1 && genericType2 ? ',' : ''
-                }${genericType2 || ''}>`
-              : fieldType + (isArray || '')
-
-            // Prepend 'const ' if isConst is captured
-            // resolvedFieldType = isConst ? `const ${resolvedFieldType}` : resolvedFieldType;
-            // No, we store isConst separately. Type itself remains 'string', not 'const string'.
-
-            const fieldValue =
-              defaultValueSingleQuote ||
-              defaultValueDoubleQuote ||
-              defaultValueNumber ||
-              defaultValueColor ||
-              defaultValueIdentifier
-
-            const fieldsDict: Record<string, any> = {
-              name: fieldName,
-              type: resolvedFieldType,
-              kind: 'Field',
-            }
-            if (isConst) {
-              fieldsDict.isConst = true
-            }
-            if (fieldValue) {
-              fieldsDict.default = fieldValue
-            }
-            // TODO: Parse @field annotations from annotationsGroup for this specific fieldName
-            // and add to fieldsDict.desc
-            typeBuild.fields.push(fieldsDict)
+        if (keyword === 'type') {
+          const typeBuild: any = {
+            name: prefixedName,
+            fields: [],
+            originalName: typeOrEnumName,
+            kind: 'User Type',
+            doc: annotationsGroup || '',
+            libraryOrigin: libId || alias || '', // Prefer libId
           }
+
+          if (exportKeyword) {
+            typeBuild.export = true
+            typeBuild.kind = 'User Export Type'
+          }
+
+          if (fieldsGroup) {
+            const fieldMatches = fieldsGroup.matchAll(this.fieldsPattern)
+            for (const fieldMatch of fieldMatches) {
+              const {
+                genericTypes,
+                isConst,
+                genericType1,
+                genericType2,
+                fieldType,
+                isArray,
+                fieldName,
+                defaultValueSingleQuote,
+                defaultValueDoubleQuote,
+                defaultValueNumber,
+                defaultValueColor,
+                defaultValueIdentifier,
+              } = fieldMatch.groups!
+
+              let resolvedFieldType = genericTypes
+                ? `${fieldMatch[1] /* array|matrix|map */}<${genericType1 || ''}${
+                    genericType1 && genericType2 ? ',' : ''
+                  }${genericType2 || ''}>`
+                : fieldType + (isArray || '')
+
+              const fieldValue =
+                defaultValueSingleQuote ||
+                defaultValueDoubleQuote ||
+                defaultValueNumber ||
+                defaultValueColor ||
+                defaultValueIdentifier
+
+              const fieldsDict: Record<string, any> = {
+                name: fieldName,
+                type: resolvedFieldType,
+                kind: 'Field',
+              }
+              if (isConst) {
+                fieldsDict.isConst = true
+              }
+              if (fieldValue) {
+                fieldsDict.default = fieldValue
+              }
+
+              // Parse @field annotations from annotationsGroup for this specific fieldName
+              if (annotationsGroup) {
+                const fieldAnnotationRegex = new RegExp(`^//\\s*@field\\s+${fieldName}\\s+(.+)`, 'm');
+                const annotationMatch = annotationsGroup.match(fieldAnnotationRegex);
+                if (annotationMatch && annotationMatch[1]) {
+                  fieldsDict.desc = annotationMatch[1].trim();
+                }
+              }
+              // If no @field annotation, a general comment for the field might be considered later if possible
+              // For now, desc will be undefined if no @field is found. Ensure it's at least an empty string.
+              if (!fieldsDict.desc) {
+                fieldsDict.desc = '';
+              }
+
+              typeBuild.fields.push(fieldsDict)
+            }
+          }
+          parsedTypes.push(typeBuild)
+        } else if (keyword === 'enum') {
+          const enumBuild: any = {
+            name: prefixedName,
+            members: [],
+            originalName: typeOrEnumName,
+            kind: 'User Enum',
+            doc: annotationsGroup || '',
+            libraryOrigin: libId || alias || '', // Prefer libId
+          }
+
+          if (exportKeyword) {
+            enumBuild.export = true
+            enumBuild.kind = 'User Export Enum'
+          }
+
+          if (fieldsGroup) {
+            const enumMemberMatches = fieldsGroup.matchAll(this.enumMemberPattern)
+            for (const memberMatch of enumMemberMatches) {
+              const { memberAnnotations, memberName, memberValue } = memberMatch.groups!
+              const memberDesc = this.extractLastComment(memberAnnotations)
+
+              const memberDict: Record<string, any> = {
+                name: memberName,
+                desc: memberDesc || '', // Ensure desc is always present
+              }
+              // Optional: store memberValue if needed by PineDocsManager
+              // if (memberValue) {
+              //   memberDict.value = memberValue.trim();
+              // }
+              enumBuild.members.push(memberDict)
+            }
+          }
+          parsedTypes.push(enumBuild)
         }
-        parsedTypes.push(typeBuild)
       }
 
       if (alias) {
-        this.parsedLibsUDT[alias] = parsedTypes
+        // Accumulate UDTs and Enums separately for the alias
+        const udtForAlias = parsedTypes.filter(t => t.libraryOrigin === alias && t.kind.includes('Type'));
+        const enumsForAlias = parsedTypes.filter(t => t.libraryOrigin === alias && t.kind.includes('Enum'));
+        if (udtForAlias.length > 0) {
+            this.parsedLibsUDT[alias] = (this.parsedLibsUDT[alias] || []).concat(udtForAlias);
+        }
+        // Storing enums separately if needed:
+        // if (enumsForAlias.length > 0) {
+        //   this.parsedLibsEnums = this.parsedLibsEnums || {}; // Ensure initialized
+        //   this.parsedLibsEnums[alias] = (this.parsedLibsEnums[alias] || []).concat(enumsForAlias);
+        // }
       }
     }
-    Class.PineDocsManager.setParsed(parsedTypes, 'fields')
+
+    // Separate UDTs and Enums before sending to PineDocsManager
+    const allUDTs = parsedTypes.filter(t => t.kind.includes('Type'));
+    const allEnums = parsedTypes.filter(t => t.kind.includes('Enum'));
+
+    if (allUDTs.length > 0) {
+      Class.PineDocsManager.setParsed(allUDTs, 'fields'); // For UDTs
+    }
+    if (allEnums.length > 0) {
+      // Assuming PineDocsManager can handle 'members' as a key for enum members,
+      // or it internally maps 'fields' to 'members' for enums.
+      // Based on subtask: "For Enums, a similar structure for fields or members should hold name and desc."
+      // This implies the structure is `members: [{name, desc}]`.
+      // If setParsed's second arg is strictly 'fields' or 'args', this needs more thought.
+      // For now, let's try to be specific if possible, assuming 'members' might be a valid type key.
+      // If not, we might need to pass 'fields' and ensure PineDocsManager handles it.
+      // Changing 'members' to 'enums' for a dedicated keyType in PineDocsManager.setParsed
+      // Class.PineDocsManager.setParsed(allEnums, 'enums'); // Refactored to return
+    }
+    return { udts: allUDTs, enums: allEnums }; // TEMPORARY REFACTOR FOR TESTING
+  }
+
+  /**
+   * Extracts the last non-empty comment line from a block of comments.
+   * @param commentBlock The block of comments, with each line starting with //
+   * @returns The content of the last relevant comment line, or empty string.
+   */
+  private extractLastComment(commentBlock: string | undefined | null): string {
+    if (!commentBlock) {
+      return ''
+    }
+    const lines = commentBlock.split('\n')
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim()
+      if (line.startsWith('//')) {
+        const commentContent = line.substring(2).trim()
+        if (commentContent && !commentContent.startsWith('@')) { // Avoid taking annotations like @enum
+          return commentContent
+        }
+      } else if (line) { // Stop if we encounter a non-comment line that has content
+        break
+      }
+    }
+    return ''
   }
 }

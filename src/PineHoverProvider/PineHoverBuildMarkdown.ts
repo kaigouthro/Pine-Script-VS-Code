@@ -55,105 +55,103 @@ export class PineHoverBuildMarkdown {
   ) {
     try {
       let syntax: string | undefined;
-      const docKind = keyedDocs?.kind || ''; // Get kind from keyedDocs
+      const docKind = keyedDocs?.kind || '';
+      const libOrigin = keyedDocs?.libraryOrigin ? ` (from ${keyedDocs.libraryOrigin})` : '';
 
-      if (docKind.toLowerCase().includes('udt') || regexId === 'UDT' || (docKind.toLowerCase().includes('type') && keyedDocs?.fields)) { // Check if it's a UDT
-        // For UDTs, construct syntax from name and fields if syntax array isn't detailed
+      if (regexId === 'variable' && keyedDocs?.calculatedTypeString) {
+        syntax = `${key}: ${keyedDocs.calculatedTypeString}`;
+      } else if (docKind.toLowerCase().includes('udt') || regexId === 'UDT' || (docKind.toLowerCase().includes('type') && keyedDocs?.fields && !keyedDocs?.members)) {
         if (keyedDocs?.name && keyedDocs?.fields && Array.isArray(keyedDocs.fields)) {
-          let udtSyntax = `type ${keyedDocs.name} {\n`;
+          let udtSyntax = `type ${keyedDocs.name}${libOrigin} {\n`;
           keyedDocs.fields.forEach((field: any) => {
-            udtSyntax += `    ${field.name}: ${field.type}${field.default ? ` = ${field.default}` : ''}\n`;
+            // Assuming field.type is a string; if it's ParsedType, it needs stringifying
+            udtSyntax += `    ${field.isConst ? 'const ' : ''}${field.type} ${field.name}${field.default ? ` = ${field.default}` : ''};\n`;
           });
           udtSyntax += `}`;
           syntax = udtSyntax;
-        } else if (Array.isArray(keyedDocs?.syntax)) {
-          syntax = keyedDocs.syntax.join('\n');
         } else {
-          syntax = keyedDocs?.syntax ?? key;
+          syntax = keyedDocs?.syntax ?? key; // Fallback for UDTs without detailed fields in keyedDocs
         }
-        regexId = 'UDT'; // Ensure regexId is UDT for prefix handling
-      } else if (docKind.toLowerCase().includes('enum') && keyedDocs?.fields) { // Check if it's an Enum
-         if (keyedDocs?.name && keyedDocs?.fields && Array.isArray(keyedDocs.fields)) {
-          let enumSyntax = `enum ${keyedDocs.name} {\n`;
-          keyedDocs.fields.forEach((member: any) => {
-            enumSyntax += `    ${member.name}${member.title ? ` (${member.title})` : ''}\n`;
+        regexId = 'UDT';
+      } else if (docKind.toLowerCase().includes('enum') || (regexId === 'Enum' && keyedDocs?.members)) {
+         if (keyedDocs?.name && keyedDocs?.members && Array.isArray(keyedDocs.members)) {
+          let enumSyntax = `enum ${keyedDocs.name}${libOrigin} {\n`;
+          keyedDocs.members.forEach((member: any) => { // Iterate members
+            enumSyntax += `    ${member.name}${member.value ? ` = ${member.value}` : ''}\n`; // Assuming members might have a value
           });
           enumSyntax += `}`;
           syntax = enumSyntax;
-        } else if (Array.isArray(keyedDocs?.syntax)) {
-          syntax = keyedDocs.syntax.join('\n');
         } else {
-          syntax = keyedDocs?.syntax ?? key;
+          syntax = keyedDocs?.syntax ?? key; // Fallback for Enums
         }
-        regexId = 'Enum'; // Special regexId for prefix handling
+        regexId = 'Enum';
       } else if (['function', 'method', 'type', 'param'].includes(regexId)) {
         const isMethod = regexId === 'method' || (keyedDocs?.thisType && keyedDocs.thisType.length > 0);
         if (Array.isArray(keyedDocs?.syntax)) {
-          syntax = keyedDocs.syntax.join('\n');
+          syntax = keyedDocs.syntax.join('\n'); // This is an array of strings for function signatures
         } else {
-          syntax = keyedDocs?.syntax ?? key;
+          syntax = keyedDocs?.syntax ?? key; // Fallback to single string syntax or key
         }
-        syntax = PineHoverHelpers.replaceNamespace(syntax, namespace, isMethod);
+        // Ensure syntax and namespace are strings before passing
+        syntax = PineHoverHelpers.replaceNamespace(syntax || key || '', namespace || '', isMethod);
         syntax = this.formatSyntaxContent(syntax, mapArrayMatrix);
         syntax = await this.checkSyntaxContent(syntax, isMethod);
-        // addDefaultArgsToSyntax is called later, which is good.
-      } else if (['field', 'variable', 'constant'].includes(regexId)) {
-        // For fields, ensure parent UDT name is part of syntax if available
-        if (regexId === 'field' && keyedDocs?.parent && keyedDocs?.name && keyedDocs?.type) {
-            syntax = `${keyedDocs.parent}.${keyedDocs.name}: ${keyedDocs.type}`;
-        } else {
-            syntax = await this.buildKeyBasedContent(keyedDocs, key);
-        }
-        syntax = Helpers.replaceSyntax(syntax ?? key) // Ensure syntax is not undefined
+        syntax += libOrigin; // Add library origin for functions/methods
+      } else if (regexId === 'field' && keyedDocs?.name && keyedDocs?.type) {
+        // For fields, use calculatedTypeString if available (more precise), else keyedDocs.type
+        const fieldTypeString = keyedDocs.calculatedTypeString || keyedDocs.type;
+        syntax = `${key}: ${fieldTypeString}`; // key is field name here
+        // namespace here is the UDT name. We can make it more explicit:
+        // syntax = `${namespace}.${key}: ${fieldTypeString}`;
+        // libOrigin for fields is handled by the parent UDT's libOrigin.
+      } else if (['variable', 'constant'].includes(regexId) && !keyedDocs?.calculatedTypeString) {
+        // If it's a variable/constant but type wasn't calculated by PineTypify (e.g. built-in from docs manager)
+        syntax = await this.buildKeyBasedContent(keyedDocs, key);
+        syntax = Helpers.replaceSyntax(syntax ?? key);
       } else if (['control', 'annotation'].includes(regexId)) {
         syntax = keyedDocs?.name ?? key;
+      } else if (!syntax && keyedDocs?.name) { // Fallback for other types if syntax isn't set yet
+        syntax = keyedDocs.name;
       }
 
-      if (!syntax || syntax === '') {
-        return [this.cbWrap(key), '***  \n']; // Wrap key if syntax is empty
+
+      if (!syntax || syntax.trim() === '') {
+        return [this.cbWrap(key + libOrigin), '***  \n']; // Wrap key if syntax is empty
       }
 
-      // Determine effective regexId for prefixing, especially if it's a method
       let effectiveRegexId = regexId;
-      if (keyedDocs?.thisType && keyedDocs.thisType.length > 0) {
-        effectiveRegexId = 'method';
-      } else if (docKind.toLowerCase().includes('udt') || (docKind.toLowerCase().includes('type') && keyedDocs?.fields)) {
-        effectiveRegexId = 'UDT';
-      } else if (docKind.toLowerCase().includes('enum')) {
-        effectiveRegexId = 'Enum';
+      if (keyedDocs?.kind) { // Prioritize kind from keyedDocs if available
+          if (keyedDocs.kind.toLowerCase().includes('method')) effectiveRegexId = 'method';
+          else if (keyedDocs.kind.toLowerCase().includes('function')) effectiveRegexId = 'function';
+          else if (keyedDocs.kind.toLowerCase().includes('udt') || (keyedDocs.kind.toLowerCase().includes('type') && keyedDocs.fields && !keyedDocs.members)) effectiveRegexId = 'UDT';
+          else if (keyedDocs.kind.toLowerCase().includes('enum') || keyedDocs.members) effectiveRegexId = 'Enum';
+          else if (keyedDocs.kind.toLowerCase() === 'field') effectiveRegexId = 'field';
+          else if (keyedDocs.kind.toLowerCase() === 'variable') effectiveRegexId = 'variable';
       }
 
-
-      let syntaxPrefix = this.getSyntaxPrefix(syntax, effectiveRegexId);
+      let syntaxPrefix = this.getSyntaxPrefix(syntax, effectiveRegexId, keyedDocs?.calculatedTypeString);
 
       if (effectiveRegexId === 'UDT' || effectiveRegexId === 'Enum') {
-        // For UDTs and Enums, the main syntax is already formatted (multi-line)
-        // No additional prefix per line. Prefix is applied by getSyntaxPrefix to the whole block if needed.
-      } else if (regexId !== 'control') { // No prefix for controls generally
-        if (syntax.includes('\n') && regexId !== 'param') {
+        // Syntax already includes type name and libOrigin. Prefix is for the whole block.
+        // No changes to syntax string itself here needed.
+      } else if (effectiveRegexId !== 'control' && effectiveRegexId !== 'annotation') {
+        if (syntax.includes('\n') && effectiveRegexId !== 'param') { // Param syntax usually single line
           syntax = syntax
             .split('\n')
-            .map((s: string) => syntaxPrefix + s) // Apply prefix to each line for multi-line functions/methods
+            .map((s: string) => syntaxPrefix + s)
             .join('\n\n');
         } else {
-          syntax = syntaxPrefix + syntax.trim(); // Apply prefix to single line
+          syntax = syntaxPrefix + syntax.trim();
         }
       }
 
-      // addDefaultArgsToSyntax was more for the old style where syntax string was simpler.
-      // The new syntax array from lint or constructed UDT/Enum syntax should already include defaults.
-      // If keyedDocs.args is present (for functions/methods from new lint format), their defaults are in their objects, not in syntax strings.
-      // Let's remove this explicit call if syntax comes from `keyedDocs.syntax` (array) or is UDT/Enum
-      if (!Array.isArray(keyedDocs?.syntax) && (effectiveRegexId === 'function' || effectiveRegexId === 'method')) {
-         if (['UDT', 'field', 'function', 'method'].includes(effectiveRegexId)) { // field might be too broad here
-            syntax = this.addDefaultArgsToSyntax(syntax, keyedDocs); // Keep for non-array syntax if still relevant
-         }
-      }
-
+      // Default args for functions/methods are now part of their 'args' objects with 'default' property
+      // The main syntax string from PineDocsManager or from PineParser's 'syntax' field should be mostly complete.
+      // No specific call to addDefaultArgsToSyntax if we rely on args array for details.
 
       return [this.cbWrap(syntax), '***  \n'];
     } catch (error) {
-      console.error(error)
+      console.error('Error in appendSyntax:', error);
       return []
     }
   }
@@ -203,28 +201,38 @@ export class PineHoverBuildMarkdown {
    * @param regexId - The regex ID.
    * @returns The syntax prefix.
    */
-  static getSyntaxPrefix(syntax: string, regexId: string) {
-    let prefix = ''
-
+  static getSyntaxPrefix(syntax: string, regexId: string, calculatedType?: string) {
+    let prefix = '';
     if (syntax.includes('<?>') || syntax.includes('undetermined type')) {
-      return prefix
-
-    } else if (regexId === 'variable') {
-      if (
-        !/(?::\s*)(array|map|matrix|int|float|bool|string|color|line|label|box|table|linefill|polyline|na)\b/g.test(
-          syntax,
-        ) || (syntax.includes('chart.point') && !/chart\.point$/.test(syntax))
-      ) {
-        return '(object) '
-      }
-
-      return '(variable) '
-
-    } else if (regexId !== 'control' && regexId !== 'UDT') {
-
-      return '(' + regexId + ') '
+      return prefix;
     }
-    return prefix
+
+    const kindToPrefixMap: Record<string, string> = {
+      'variable': `(variable)${calculatedType ? '' : ' object'} `, // If type is known, don't add 'object'
+      'function': '(function) ',
+      'method': '(method) ',
+      'param': '(parameter) ',
+      'field': '(field) ',
+      'UDT': '', // UDT syntax is `type Name {...}` - no prefix needed here
+      'Enum': '', // Enum syntax is `enum Name {...}`
+      'type': '(type) ', // For built-in types like 'color' if not UDT/Enum
+      // 'constant', 'control', 'annotation' usually don't need prefix or are handled by their syntax.
+    };
+
+    prefix = kindToPrefixMap[regexId] || '';
+
+    // Special handling for variables if type is unknown or a generic object from old docs
+    if (regexId === 'variable' && !calculatedType) {
+        if (!/(?::\s*)(array|map|matrix|int|float|bool|string|color|line|label|box|table|linefill|polyline|na)\b/g.test(syntax) ||
+            (syntax.includes('chart.point') && !/chart\.point$/.test(syntax))) {
+            // It's likely a UDT instance or some other complex object if its type isn't a basic one.
+            // The `(variable object)` prefix might be too strong if PineTypify couldn't find type.
+            // Let's rely on calculatedTypeString in appendSyntax to show the type if known.
+            // If not, just "(variable)" is fine.
+        }
+    }
+
+    return prefix;
   }
 
   /** 
@@ -313,32 +321,32 @@ export class PineHoverBuildMarkdown {
   static async appendDescription(keyedDocs: any, regexId: string) { // keyedDocs is any (actual doc object)
     // The old logic skipped description for individual fields.
     // New UDT field structure has a 'desc' field, so we should show it.
-    // if (regexId === 'field') {
+    // if (regexId === 'field') { // Fields now have descriptions from PineParser
     //   return []
     // }
     try {
-      // Prioritize keyedDocs.desc as the primary source of description.
-      // The new lint format provides 'desc' as an array of strings for most entities.
-      const descriptionText = keyedDocs?.desc;
+      // keyedDocs.doc is for main description (functions, UDT, Enum) from PineParser's @description or main comment.
+      // keyedDocs.desc is for individual item description (field, param, enum member, or built-in's general desc).
+      let description = '';
+      if (regexId === 'param' || regexId === 'field' || regexId === 'EnumMember') { // EnumMember used as example if members have own desc
+        description = keyedDocs?.desc;
+      } else { // For main symbols like function, UDT, Enum
+        description = keyedDocs?.doc || keyedDocs?.desc;
+      }
 
-      if (descriptionText) {
-        const description = Array.isArray(descriptionText) ? descriptionText.join('  \n') : descriptionText;
-        if (description.trim() !== "") {
-          return [Helpers.formatUrl(description.trim())];
+      if (description) {
+        const descString = Array.isArray(description) ? description.join('  \n') : description;
+        if (descString.trim()) {
+          const formatted = Helpers.formatUrl(descString.trim());
+          if (formatted && formatted.trim()) { // Ensure formatUrl didn't return empty or undefined
+            return [formatted];
+          }
         }
       }
-      // Fallback to keyedDocs.info if .desc is not available or empty, though less common for main desc.
-      const infoText = keyedDocs?.info;
-      if (infoText) {
-        const infoDescription = Array.isArray(infoText) ? infoText.join('  \n') : infoText;
-        if (infoDescription.trim() !== "") {
-          return [Helpers.formatUrl(infoDescription.trim())];
-        }
-      }
-      return []
+      return ["(No description available)"];
     } catch (error) {
-      console.error(error)
-      return []
+      console.error('Error in appendDescription:', error);
+      return ["(Error loading description)"]; // This path returns string[]
     }
   }
 
@@ -357,41 +365,31 @@ export class PineHoverBuildMarkdown {
         return []
       }
       let build: string[] = ['  \n', Helpers.boldWrap(title), '\n']
-      for (const argFieldInfo of argsOrFields) {
-        if (!argFieldInfo || typeof argFieldInfo !== 'object') {
-          continue
+      for (const item of argsOrFields) {
+        if (!item || typeof item !== 'object') {
+          continue;
         }
-        // For UDT Fields (argsOrFieldsKey === 'fields'): name, type, desc, default
-        // For Function Args (argsOrFieldsKey === 'args'): name, displayType, desc, required, default
-        const name = argFieldInfo.name;
-        const type = argFieldInfo.displayType || argFieldInfo.type || 'any'; // Use displayType for args, type for fields
-        const descArray = argFieldInfo.desc; // desc is expected to be an array
-        const desc = descArray ? (Array.isArray(descArray) ? descArray.join(' ') : descArray) : '';
+        const name = item.name;
+        const type = item.type || item.displayType || 'any'; // 'type' from PineParser, 'displayType' as fallback
+        const itemDesc = item.desc || '(No description)'; // 'desc' from PineParser
+        const defaultValue = item.default;
+        const isRequired = argsOrFieldsKey === 'args' ? (item.required ?? (typeof defaultValue === 'undefined')) : (typeof defaultValue === 'undefined');
 
-        // Determine if required. For 'args', use 'required' field. For 'fields' (UDT fields), they are implicitly required unless a 'default' is present.
-        let isRequired;
-        if (argsOrFieldsKey === 'args') {
-          isRequired = argFieldInfo.required ?? false; // Assume not required if undefined
-        } else { // 'fields'
-          isRequired = typeof argFieldInfo.default === 'undefined';
-        }
 
-        const defaultValue = argFieldInfo.default;
-
-        let paramSignature = `- **${name}** (\`${type}\`)`
-        if (!isRequired) {
-          paramSignature += ' (optional)';
+        let signature = `- **${name}** (\`${type}\`)`;
+        if (!isRequired && argsOrFieldsKey === 'args') { // Only show optional for function/method args
+          signature += ' (optional)';
         }
-        paramSignature += `: ${Helpers.formatUrl(desc) || 'No description.'}`;
-        if (typeof defaultValue !== 'undefined') { // Check if defaultValue is explicitly set
-          paramSignature += ` (default: \`${defaultValue}\`)`;
+        signature += `: ${Helpers.formatUrl(itemDesc)}`;
+        if (typeof defaultValue !== 'undefined') {
+          signature += ` (default: \`${defaultValue}\`)`;
         }
-        build.push(paramSignature + '  \n');
+        build.push(signature + '  \n');
       }
-      return build
+      return build;
     } catch (error) {
-      console.error(error)
-      return []
+      console.error('Error in appendParamsFields:', error);
+      return [];
     }
   }
 
@@ -478,16 +476,19 @@ export class PineHoverBuildMarkdown {
    * @param detailType - The type of the detail.
    * @returns An array containing the details.
    */
-  static appendDetails(detail: string, detailType: string) {
+  static appendDetails(detail: string, detailType: string): string[] { // Explicitly string[]
     try {
-      let build: string[] = []
-      if (detail && detailType.toLowerCase() !== 'examples') {
-        build = [`  \n${Helpers.boldWrap(detailType)} - ${Helpers.formatUrl(detail)}`]
+      let build: string[] = [];
+      if (detail && detailType.toLowerCase() !== 'examples') { // Ensure detail is not empty
+        const formattedDetail = Helpers.formatUrl(detail);
+        if (formattedDetail && formattedDetail.trim()) { // Ensure formatted detail is not empty
+          build = [`  \n${Helpers.boldWrap(detailType)} - ${formattedDetail}`];
+        }
       }
-      return build
+      return build; // Returns string[] (possibly empty)
     } catch (error) {
-      console.error(error)
-      return []
+      console.error(error);
+      return []; // Returns string[]
     }
   }
 
@@ -504,43 +505,27 @@ export class PineHoverBuildMarkdown {
     }
     try {
       if (keyedDocs) {
-        const returnedTypes = keyedDocs.returnedTypes; // Expected: array of strings like ["bool"], ["float", "na"]
-        const returnsDescription = keyedDocs.returns; // Expected: array of strings (description for the return) or string
+        // Use 'returnedTypes' (array of strings from PineParser) and 'returns' (string description from PineParser)
+        const returnedTypes = keyedDocs.returnedTypes; // Array like ["float", "na"] or ["bool"]
+        const returnsDesc = keyedDocs.returns; // String description
 
         if (returnedTypes && Array.isArray(returnedTypes) && returnedTypes.length > 0) {
-          const typesString = returnedTypes.map(t => `\`${Helpers.replaceType(t)}\``).join(' or ');
-          let returnsMarkdown = `  \n${Helpers.boldWrap('Returns')} - ${typesString}`;
-
-          if (returnsDescription) {
-            const descStr = Array.isArray(returnsDescription) ? returnsDescription.join(' ') : returnsDescription;
-            if (descStr.trim()) {
-              returnsMarkdown += `: ${Helpers.formatUrl(descStr.trim())}`;
-            }
+          const typesString = returnedTypes.map(t => `\`${t}\``).join(' or ');
+          let md = `  \n${Helpers.boldWrap('Returns')} - ${typesString}`;
+          if (returnsDesc && typeof returnsDesc === 'string' && returnsDesc.trim()) {
+            md += `: ${Helpers.formatUrl(returnsDesc.trim())}`;
           }
-          return [returnsMarkdown];
+          return [md];
+        } else if (returnsDesc && typeof returnsDesc === 'string' && returnsDesc.trim()) {
+          // Only description, no specific types array
+          return [`  \n${Helpers.boldWrap('Returns')} - ${Helpers.formatUrl(returnsDesc.trim())}`];
         }
-        // Fallback for older structures or if only keyedDocs.returns (as a string description) exists
-        // This part might be redundant if PineDocsManager consistently provides returnedTypes
-        const oldReturnsStyle = Helpers.returnTypeArrayCheck(keyedDocs); // This helper might rely on old structure
-        if (oldReturnsStyle && typeof oldReturnsStyle === 'string') {
-             const details = this.appendDetails(Helpers.replaceType(oldReturnsStyle), 'Returns')
-             if (details.length > 0 && !oldReturnsStyle.includes('`')) {
-                 const split = details[0].split(' - ');
-                 if (split.length > 1) {
-                    split[1] = '`' + split[1];
-                    split[split.length - 1] += '`';
-                    details[0] = split.join(' - ');
-                 }
-                 return details;
-             }
-             return details;
-        }
-        return []
+        return []; // No return info
       }
-      return []
+      return [];
     } catch (error) {
-      console.error(error)
-      return []
+      console.error('Error in appendReturns:', error);
+      return [];
     }
   }
 
@@ -573,19 +558,20 @@ export class PineHoverBuildMarkdown {
   static async appendSeeAlso(keyedDocs: any, key: string) { // keyedDocs is any
     try {
       if (key && keyedDocs?.seeAlso && keyedDocs?.seeAlso.length > 0) {
-        let build = [PineHoverBuildMarkdown.iconString]
-        if (keyedDocs.seeAlso instanceof Array) {
-          const formatUrl = Helpers.formatUrl(keyedDocs.seeAlso.join(', '))
-          build.push(formatUrl ?? '')
-        } else {
-          build.push(Helpers?.formatUrl(keyedDocs?.seeAlso ?? '') ?? '')
+        let build: string[] = []; // Initialize as string[]
+        const seeAlsoContent = keyedDocs.seeAlso instanceof Array ? keyedDocs.seeAlso.join(', ') : keyedDocs.seeAlso;
+        const formattedUrl = Helpers.formatUrl(seeAlsoContent ?? '');
+
+        if (formattedUrl && formattedUrl.trim()) {
+          build.push(PineHoverBuildMarkdown.iconString);
+          build.push(formattedUrl);
         }
-        return build
+        return build; // Returns string[] (possibly empty or with content)
       }
-      return [] // Return empty array if no seeAlso
+      return [];
     } catch (error) {
-      console.error(error)
-      return [] // Return empty array on error for consistency
+      console.error(error);
+      return [];
     }
   }
 
@@ -594,10 +580,9 @@ export class PineHoverBuildMarkdown {
    * @param keyedDocs - The documentation object for the UDT.
    * @returns A promise that resolves to an array containing the UDT fields markdown.
    */
-  static async appendUDTFields(keyedDocs: any) {
+  static async appendUDTFields(keyedDocs: any) { // keyedDocs is the UDT documentation object
     try {
-      // Reuses appendParamsFields logic, as UDT fields are similar to parameters in structure
-      // { name, type, desc, default }
+      // UDT fields are in keyedDocs.fields, each with name, type, desc, default
       return await this.appendParamsFields(keyedDocs, 'fields', 'Fields');
     } catch (error) {
       console.error('Error in appendUDTFields:', error);
@@ -610,31 +595,30 @@ export class PineHoverBuildMarkdown {
    * @param keyedDocs - The documentation object for the Enum.
    * @returns A promise that resolves to an array containing the Enum members markdown.
    */
-  static async appendEnumMembers(keyedDocs: any) {
+  static async appendEnumMembers(keyedDocs: any) { // keyedDocs is the Enum documentation object
     try {
-      const members = keyedDocs?.fields; // Enum members are in 'fields' property
+      const members = keyedDocs?.members; // Enum members are in keyedDocs.members from PineParser
       if (!members || !Array.isArray(members) || members.length === 0) {
         return [];
       }
       let build: string[] = ['  \n', Helpers.boldWrap('Members'), '\n'];
       for (const member of members) {
-        if (!member || typeof member !== 'object') {
+        if (!member || typeof member !== 'object' || !member.name) {
           continue;
         }
         const name = member.name;
-        const title = member.title; // Optional title for enum member
-        const descArray = member.desc; // desc is expected to be an array or string
-        const desc = descArray ? (Array.isArray(descArray) ? descArray.join(' ') : descArray) : '';
+        // const value = member.value; // If enum members have values and we want to show them
+        const memberDesc = member.desc || '(No description)'; // desc from PineParser
 
         let memberSignature = `- **${name}**`;
-        if (title) {
-          memberSignature += ` (${title})`;
-        }
-        memberSignature += `: ${Helpers.formatUrl(desc) || 'No description.'}`;
+        // if (value) {
+        //   memberSignature += ` = \`${value}\``;
+        // }
+        memberSignature += `: ${Helpers.formatUrl(memberDesc)}`;
         build.push(memberSignature + '  \n');
       }
       return build;
-    } catch (error)
+    } catch (error) {
       console.error('Error in appendEnumMembers:', error);
       return [];
     }

@@ -32,13 +32,15 @@ export class EditorUtils {
 /**
  * Represents a parsed type, including nested structures for UDTs.
  */
-interface ParsedType {
-  baseType: string
-  containerType?: 'array' | 'matrix' | 'map'
-  elementType?: ParsedType
-  keyType?: ParsedType // For maps
-  lib?: string
-  isArray?: boolean
+export interface ParsedType { // Added export
+  baseType: string;
+  modifier?: 'series' | 'simple' | 'input' | 'const' | 'literal' | string; // string for other potential modifiers
+  containerType?: 'array' | 'matrix' | 'map';
+  elementType?: ParsedType; // For array, matrix
+  keyType?: ParsedType;   // For map (key type)
+  valueType?: ParsedType; // For map (value type) -> renaming elementType for map's value for clarity
+  lib?: string;
+  // isArray is deprecated in favor of containerType: 'array' and elementType
 }
 
 /**
@@ -55,65 +57,136 @@ export class PineTypify {
    * @param typeString The type string to parse.
    * @returns The parsed type.
    */
-  private parseType(typeString: string): ParsedType {
-    const match = /^(?:(array|matrix|map)<([\w\.]+)(?:,\s*([\w\.]+))?>|([\w\.]+(?=\[\]))|([\w\.]+))(\[\])?$/g.exec(
-      typeString,
-    )
-    if (!match) {
-      return { baseType: 'unknown' }
+  public static parseType(typeString: string): ParsedType { // Made public static
+    if (!typeString) return { baseType: 'unknown' };
+    typeString = typeString.trim();
+
+    let modifier: ParsedType['modifier'] | undefined = undefined;
+    const modifierMatch = typeString.match(/^(series|simple|input|const|literal)\s+(.*)$/);
+    if (modifierMatch) {
+      modifier = modifierMatch[1] as ParsedType['modifier'];
+      typeString = modifierMatch[2];
     }
 
-    const [, containerType, generic1, generic2, arrayType, baseType, isArray] = match
+    // Handle library prefix: Lib.Type
+    let lib: string | undefined = undefined;
+    const libTypeMatch = typeString.match(/^([a-zA-Z_][\w]*)\.([\s\S]*)$/); // Changed to [\s\S]* to handle generics within lib types
+    if (libTypeMatch) {
+      lib = libTypeMatch[1];
+      typeString = libTypeMatch[2];
+    }
 
-    if (containerType) {
-      if (containerType === 'map') {
-        return {
-          baseType: 'map' as const,
+    // Handle generics: array<T>, matrix<T>, map<K, V>
+    const genericMatch = typeString.match(/^(array|matrix|map)\s*<\s*([^,]+)(?:\s*,\s*([\s\S]+))?\s*>$/);
+    if (genericMatch) {
+      const container = genericMatch[1] as 'array' | 'matrix' | 'map';
+      const type1String = genericMatch[2].trim();
+      const type2String = genericMatch[3]?.trim();
 
-          containerType: containerType as 'map',
-          keyType: this.parseType(generic1),
-          elementType: this.parseType(generic2),
-        }
-      } else {
+      if (container === 'map') {
         return {
-          baseType: 'array' as const,
-          containerType: containerType as 'array' | 'matrix',
-          elementType: this.parseType(generic1),
-        }
-      }
-    } else if (arrayType) {
-      return {
-        baseType: arrayType.replace(/\[\]$/, ''),
-        isArray: true,
-      }
-    } else {
-      return {
-        baseType: baseType,
-        isArray: !!isArray,
+          baseType: container,
+          modifier,
+          lib, // Lib applies to the map itself if it's like Lib.map<K,V> - though unusual for built-ins
+          containerType: container,
+          keyType: PineTypify.parseType(type1String), // Use static call
+          valueType: PineTypify.parseType(type2String || 'unknown'), // Use static call
+        };
+      } else { // array or matrix
+        return {
+          baseType: container,
+          modifier,
+          lib,
+          containerType: container,
+          elementType: PineTypify.parseType(type1String), // Use static call
+        };
       }
     }
+
+    // Handle simple arrays: type[]
+    const arraySuffixMatch = typeString.match(/^(.*)\[\s*\]$/);
+    if (arraySuffixMatch) {
+      const baseTypeName = arraySuffixMatch[1].trim();
+      // Constructing it as if it were array<baseTypeName> for consistency
+      return {
+        baseType: 'array', // The container is an array
+        modifier,
+        // lib might have been parsed before for baseTypeName if it was Lib.Type[]
+        // If baseTypeName itself has a lib prefix, PineTypify.parseType(baseTypeName) will get it.
+        containerType: 'array',
+        elementType: PineTypify.parseType(baseTypeName), // Use static call
+      };
+    }
+
+    // Simple type or UDT (possibly with a now-stripped lib prefix)
+    return {
+      baseType: typeString, // What remains is the base type
+      modifier,
+      lib, // This lib is the one associated with this specific baseType
+    };
+  }
+
+  private mapInitialized = false;
+  private async ensureMapInitialized() {
+      if (!this.mapInitialized) {
+          await this.makeMap();
+          this.mapInitialized = true;
+      }
+  }
+
+  public async getVariableType(variableName: string): Promise<ParsedType | null> {
+    await this.ensureMapInitialized();
+    return this.typeMap.get(variableName) || null;
   }
 
   /**
    * Populates the type map with variable types and UDT definitions.
+   * Prioritizes linting data, then static variable docs, then built-ins.
    */
   async makeMap() {
-    const variables = Class.PineDocsManager.getDocs('variables')
-    this.typeMap = new Map(
-      variables.map((item: any) => [
-        item.name,
-        this.parseType(
-          item.type.replace(/(const|input|series|simple|literal)\s*/g, '').replace(/([\w.]+)\[\]/g, 'array<$1>'),
-        ),
-      ]),
-    )
+    this.typeMap.clear(); // Start fresh
 
-    // Add built-in boolean constants
-    this.typeMap.set('true', { baseType: 'bool' })
-    this.typeMap.set('false', { baseType: 'bool' })
+    // 1. Process Linting Data
+    let lintResponseFromLinter: any = undefined;
+    // Access Linter property dynamically to satisfy TypeScript during compilation,
+    // while allowing the Jest mock (which defines Linter) to work at runtime.
+    if (typeof (VSCode as any).Linter?.getLintResponse === 'function') {
+        lintResponseFromLinter = (VSCode as any).Linter.getLintResponse();
+    }
+    const lintVariables = (lintResponseFromLinter?.success && lintResponseFromLinter?.result?.variables)
+      ? lintResponseFromLinter.result.variables
+      : [];
 
-    // Add 'na' as float
-    this.typeMap.set('na', { baseType: 'float' })
+    if (Array.isArray(lintVariables)) {
+      for (const lintVar of lintVariables as Array<{name: string, type: string}>) {
+        if (lintVar.name && lintVar.type) {
+          const parsedType = PineTypify.parseType(lintVar.type); // Changed to static call
+          if (parsedType && parsedType.baseType !== 'unknown') {
+            this.typeMap.set(lintVar.name, parsedType);
+          }
+        }
+      }
+    }
+
+    // 2. Process variables from PineDocsManager (these are generally built-in variables)
+    interface StaticVariableDoc { name: string; type: string; [key: string]: any; }
+    const staticVariables = Class.PineDocsManager.getDocs('variables') as StaticVariableDoc[];
+
+    if (staticVariables && Array.isArray(staticVariables)) {
+      for (const item of staticVariables) {
+        if (item.name && item.type && !this.typeMap.has(item.name)) {
+          const typeStr = item.type.replace(/(const|input|series|simple|literal)\s*/g, '').replace(/([\w.]+)\[\]/g, 'array<$1>');
+          this.typeMap.set(item.name, PineTypify.parseType(typeStr)); // Changed to static call
+        }
+      }
+    }
+
+    // 3. Add built-in boolean constants
+    if (!this.typeMap.has('true')) this.typeMap.set('true', { baseType: 'bool' });
+    if (!this.typeMap.has('false')) this.typeMap.set('false', { baseType: 'bool' });
+
+    // 4. Add 'na' as float
+    if (!this.typeMap.has('na')) this.typeMap.set('na', { baseType: 'float' });
 
     // Add common built-in color constants
     const commonColors = [
@@ -136,15 +209,11 @@ export class PineTypify {
       'yellow',
     ]
     commonColors.forEach((color) => {
-      this.typeMap.set(`color.${color}`, { baseType: 'color' })
-    })
-
-    // Example for UDTs (if any were predefined or commonly used and not in docs)
-    // this.typeMap.set('myCustomUDT', { baseType: 'myCustomUDT', isUDT: true });
-
-    // Fetch and parse UDT definitions (placeholder - requires actual UDT definitions)
-    // const udtDefinitions = await this.fetchUDTDefinitions();
-    // this.parseAndAddUDTs(udtDefinitions);
+      if (!this.typeMap.has(`color.${color}`)) {
+        this.typeMap.set(`color.${color}`, { baseType: 'color', lib: 'color' });
+      }
+    });
+    this.mapInitialized = true; // Set flag after map is populated
   }
 
   private inferTypeFromValue(valueString: string, variableName: string): ParsedType | null {
@@ -219,6 +288,11 @@ export class PineTypify {
       const expr1String = valueString.substring(questionMarkIndex + 1, colonIndex).trim()
       const expr2String = valueString.substring(colonIndex + 1).trim()
 
+      // inferTypeFromValue is an instance method, but parseType is now static.
+      // This implies inferTypeFromValue might need to call PineTypify.parseType if it were to parse types.
+      // However, inferTypeFromValue calls itself recursively, not parseType directly.
+      // The calls to this.parseType were in the original parseType method for generics, which is now static.
+      // So, inferTypeFromValue's recursive calls are fine.
       const type1 = this.inferTypeFromValue(expr1String, '')
       const type2 = this.inferTypeFromValue(expr2String, '')
 
@@ -350,7 +424,7 @@ export class PineTypify {
           let lineStartOffset = 0
           for (let k = 0; k < i; ++k) lineStartOffset += lines[k].length + (text.includes('\r\n') ? 2 : 1)
 
-          const typePrefix = `${this.stringifyParsedType(inferredType)} `
+          const typePrefix = `${PineTypify.stringifyParsedType(inferredType)} ` // Changed this. to PineTypify.
 
           // Find the start of the variable name in the line to insert the type
           let insertionPoint = lineText.indexOf(variableName)
@@ -419,15 +493,31 @@ export class PineTypify {
    * @param type The parsed type to stringify.
    * @returns The string representation of the type.
    */
-  private stringifyParsedType(type: ParsedType): string {
-    if (type.containerType === 'map') {
-      return `map<${this.stringifyParsedType(type.keyType!)}, ${this.stringifyParsedType(type.elementType!)}>`
-    } else if (type.containerType) {
-      return `${type.containerType}<${this.stringifyParsedType(type.elementType!)}>`
-    } else if (type.isArray) {
-      return `${type.baseType}[]`
-    } else {
-      return type.baseType
+  public static stringifyParsedType(type: ParsedType): string {
+    if (!type || !type.baseType) return 'unknown';
+
+    let typeString = '';
+
+    if (type.modifier) {
+      typeString += `${type.modifier} `;
     }
+
+    if (type.lib) {
+      typeString += `${type.lib}.`;
+    }
+
+    typeString += type.baseType;
+
+    if (type.containerType === 'map' && type.keyType && type.valueType) {
+      typeString = `${type.modifier ? type.modifier + " " : ""}${type.lib ? type.lib + "." : ""}map<${PineTypify.stringifyParsedType(type.keyType)}, ${PineTypify.stringifyParsedType(type.valueType)}>`;
+    } else if ((type.containerType === 'array' || type.containerType === 'matrix') && type.elementType) {
+      typeString = `${type.modifier ? type.modifier + " " : ""}${type.lib ? type.lib + "." : ""}array<${PineTypify.stringifyParsedType(type.elementType)}>`; // Standardize to array<T> for stringification for matrix too
+      if (type.containerType === 'matrix') typeString = typeString.replace('array<','matrix<'); // then correct if it was matrix
+    }
+    // Note: The original isArray field is deprecated in ParsedType.
+    // The parseType method converts "type[]" into containerType: "array".
+    // So, direct handling of isArray is not needed here if parseType is consistently used.
+
+    return typeString;
   }
 }

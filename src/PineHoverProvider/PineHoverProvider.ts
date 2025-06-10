@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
 import { PineAnnotationParser, ParsedDocumentation } from '../PineAnnotationParser';
-import { PineDocsManager } from '../PineDocsManager'
-import { PineHoverHelpers } from './PineHoverHelpers'
+import { PineDocsManager } from '../PineDocsManager';
+import { PineHoverHelpers } from './PineHoverHelpers';
+import { Class } from '../PineClass'; // Added import
+import { PineTypify, ParsedType } from '../PineTypify'; // Added import
 import { PineHoverBuildMarkdown } from './PineHoverBuildMarkdown'
 import { PineHoverMethod } from './PineHoverIsMethod'
 import { PineHoverFunction } from './PineHoverIsFunction'
@@ -424,8 +426,40 @@ export class PineHoverProvider implements vscode.HoverProvider {
     let [resolvedKeyedDocs, resolvedKey, resolvedNamespace] = resolvedValues
 
     if (!resolvedKeyedDocs || !resolvedKey) {
-      return
+      if (regexId === 'variable' && resolvedKey) {
+        // Use (Class as any).pineTypifyInstance for instance methods
+        const parsedType = await (Class as any).pineTypifyInstance?.getVariableType(resolvedKey);
+        if (parsedType) {
+          const typeString = PineTypify.stringifyParsedType(parsedType); // static call
+          resolvedKeyedDocs = {
+            name: resolvedKey,
+            kind: 'variable',
+            calculatedTypeString: typeString,
+            doc: '', // Add common properties to satisfy createHoverMarkdown if it's strict
+            desc: '',
+            args: [],
+            fields: [],
+            members: [],
+          } as any; // Cast to any to match PineDocsManager type if needed, or define a shared HoverDocType
+        } else {
+          return;
+        }
+      } else {
+        return;
+      }
+    } else if (regexId === 'variable' && resolvedKey && resolvedKeyedDocs) { // Ensure resolvedKeyedDocs exists
+      const parsedType = await (Class as any).pineTypifyInstance?.getVariableType(resolvedKey);
+      if (parsedType) {
+        const typeString = PineTypify.stringifyParsedType(parsedType); // static call
+        resolvedKeyedDocs.calculatedTypeString = typeString;
+      }
     }
+
+
+    if (!resolvedKeyedDocs || !resolvedKey) { // Re-check after attempting to build for variable
+        return;
+    }
+
     const markdown = await this.createHoverMarkdown(resolvedKeyedDocs, resolvedKey, resolvedNamespace, regexId)
 
     // Create a new hover with the markdown and word range
@@ -479,22 +513,27 @@ export class PineHoverProvider implements vscode.HoverProvider {
     const markdownSections: Promise<string[]>[] = [];
 
     markdownSections.push(PineHoverBuildMarkdown.appendSyntax(keyedDocs, key, namespace, regexId, this.mapArrayMatrix));
-    markdownSections.push(PineHoverBuildMarkdown.appendDescription(keyedDocs, regexId));
+    markdownSections.push(PineHoverBuildMarkdown.appendDescription(keyedDocs, regexId)); // regexId helps decide if it's a field/param or main entity
 
     const docKind = keyedDocs?.kind?.toLowerCase() || '';
-    const isUDT = docKind.includes('udt') || docKind.includes('user defined type') || (regexId === 'UDT' && keyedDocs?.fields);
-    const isEnum = docKind.includes('enum') || (regexId === 'Enum' && keyedDocs?.fields); // Assuming regexId could be 'Enum'
+    // Check based on kind from docs OR regexId if kind is missing/generic
+    const isUDT = docKind.includes('udt') || docKind.includes('type') && (keyedDocs?.fields && !keyedDocs?.members) || (regexId === 'UDT' && keyedDocs?.fields);
+    const isEnum = docKind.includes('enum') || (keyedDocs?.members) || (regexId === 'Enum' && keyedDocs?.members);
+
 
     if (isUDT) {
       markdownSections.push(PineHoverBuildMarkdown.appendUDTFields(keyedDocs));
     } else if (isEnum) {
       markdownSections.push(PineHoverBuildMarkdown.appendEnumMembers(keyedDocs));
-    } else {
-      // Only append Params for functions/methods, not for UDTs/Enums which use Fields/Members
+    } else if (keyedDocs?.args && Array.isArray(keyedDocs.args) && keyedDocs.args.length > 0) {
+      // Only append Params if there are args, and it's not UDT/Enum
       markdownSections.push(PineHoverBuildMarkdown.appendParams(keyedDocs));
     }
 
-    markdownSections.push(PineHoverBuildMarkdown.appendReturns(keyedDocs, regexId));
+    // Returns only for functions/methods
+    if (regexId === 'function' || regexId === 'method' || docKind.includes('function') || docKind.includes('method')) {
+        markdownSections.push(PineHoverBuildMarkdown.appendReturns(keyedDocs, regexId));
+    }
     markdownSections.push(PineHoverBuildMarkdown.appendRemarks(keyedDocs));
     markdownSections.push(PineHoverBuildMarkdown.appendSeeAlso(keyedDocs, key));
 
