@@ -364,9 +364,10 @@ export class PineCompletionService {
     }
 
     let currentTypeName: string | null = null // Cleaned type name of the current object/UDT
-    let currentLibId: string | undefined = undefined // LibId of the UDT whose members are currently being listed
+    let currentLibId: string | undefined = undefined // LibId of the UDT/Enum whose members are currently being listed
     let currentMembers: any[] | null = null // Fields/members of the current UDT/Enum
     let currentNamespaceForCompletionDoc = '' // Builds up the path like "myUdtVar.field1"
+    let isCurrentSourceEnum = false // Flag to indicate if currentMembers are from an Enum
 
     const firstPart = parts[0]
     const variableDoc = this.docsManager.getMap('variables', 'variables2').get(firstPart)
@@ -394,6 +395,7 @@ export class PineCompletionService {
         currentLibId = udtDoc.libId
         currentMembers = udtDoc.fields
         currentNamespaceForCompletionDoc = firstPart // Namespace is the UDT name
+        isCurrentSourceEnum = false
       } else {
         const enumDoc = this.docsManager.getMap('enums').get(udtOrEnumNameCandidate)
         if (enumDoc && enumDoc.members) {
@@ -401,6 +403,7 @@ export class PineCompletionService {
           currentLibId = enumDoc.libId
           currentMembers = enumDoc.members // Suggest enum members
           currentNamespaceForCompletionDoc = firstPart // Namespace is the Enum name
+          isCurrentSourceEnum = true
         }
       }
     }
@@ -444,35 +447,31 @@ export class PineCompletionService {
           continue
         }
 
-        // Determine kind: 'Field' or 'EnumMember'
-        // If currentTypeName is an Enum and currentMembers are its members directly.
-        let memberKind = 'Field'; // Default to Field
-        const parentDoc = this.docsManager.getMap('UDT', 'enums').get(currentTypeName || '')
-        if (parentDoc && parentDoc.kind === 'enum_object') { // Assuming enums have a kind 'enum_object' or similar
-             memberKind = 'EnumMember';
-        } else if (parentDoc && parentDoc.fields && parentDoc.fields.includes(member)) {
-            memberKind = 'Field';
-        }
-        // A more direct check if the parent object (whose members these are) is an enum:
-        const directParentName = parts[parts.length - 2]; // The object name right before the current segment
-        if (directParentName) {
-            const cleanedParentName = this.cleanTypeName(directParentName);
-            const parentTypeDef = this.docsManager.getMap('enums').get(cleanedParentName);
-            if (parentTypeDef && parentTypeDef.members && parentTypeDef.members.includes(member)) {
-                 memberKind = 'EnumMember';
-            }
-        }
+        let memberKind = 'Field';
+        let memberType = member.type;
+        let isConstMember = member.isConst;
+        let memberDefaultValue = member.default;
 
+        if (isCurrentSourceEnum) {
+          memberKind = 'EnumMember';
+          memberType = currentTypeName || undefined; // Type of an enum member is effectively the enum itself
+          isConstMember = true; // Enum members are always constants
+          memberDefaultValue = member.value; // Enum members have 'value'
+        } else {
+          // For UDT fields, kind is 'Field', type is member.type, isConst is member.isConst, default is member.default
+          // These are already correctly assigned by initialization from `member`.
+        }
 
         completions.push({
           name: member.name,
-          doc: member, // The full field/member object {name, type, desc, libId, etc.}
-          namespace: currentNamespaceForCompletionDoc, // e.g., "myUdtVar" or "myUdtVar.field1" or "MyEnum"
+          doc: member,
+          namespace: currentNamespaceForCompletionDoc,
           kind: memberKind,
-          type: member.type, // Raw type string of the field/member
-          description: member.desc, // Description from @field annotation or parser
-          libId: member.libId || currentLibId, // Prefer field's own libId, fallback to parent UDT's
-          isConst: memberKind === 'EnumMember' || member.isConst, // Enum members or const fields
+          type: memberType,
+          description: member.desc,
+          libId: member.libId || currentLibId,
+          isConst: isConstMember,
+          default: memberDefaultValue,
         })
       }
       // If UDT/Enum path yielded results, return them.

@@ -8,6 +8,25 @@ export class PineParser {
   libIds: any[] = []
   parsedLibsFunctions: any = {}
   parsedLibsUDT: any = {}
+  parsedEnums: any = {}
+  // parsedVariables: any = {} // This internal state might be redundant if PineDocsManager is the sole source of truth.
+
+  // Variable Declaration Pattern
+  variableDeclarationPattern: RegExp = /(?:(?<varKeyword>var)\s+)?(?:(?<explicitType>[a-zA-Z_]\w*(?:\[\])?(?:<[a-zA-Z_]\w*(?:,\s*[a-zA-Z_]\w*)*>)?)\s+)?(?<variableName>[a-zA-Z_]\w*)\s*=\s*(?<assignmentValue>.*?)(?:\s*;|$)/gm
+
+  // UDT Constructor Regex (for type inference)
+  udtConstructorPattern: RegExp = /(?<udtName>[a-zA-Z_]\w*)\.new\s*\(/
+
+  // Array new with type Regex (for type inference)
+  arrayNewWithTypePattern: RegExp = /array\.new<(?<arrayType>[a-zA-Z_]\w*)>\s*\(/
+
+  // Enum Definition Pattern
+  enumPattern: RegExp =
+    /(?<exportKeyword>export\s+)?enum\s+(?<enumName>\w+)\s*\{(?<membersBlock>[^}]*)\}/gm
+
+  // Enum Member Pattern
+  enumMemberPattern: RegExp =
+    /\s*(?<memberName>\w+)\s*(?:=\s*(?<memberValue>"[^"]*"|'[^']*'|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*))?\s*,?/gm
 
   // Refactored regular expressions with named capture groups for better readability and maintainability
   // Type Definition Pattern
@@ -144,6 +163,8 @@ export class PineParser {
       }
       this.parseFunctions([lib]) // Parse each lib individually
       this.parseTypes([lib])
+      this.parseEnums([lib])
+      this.parseVariableDeclarations([lib])
     }
   }
 
@@ -157,6 +178,8 @@ export class PineParser {
     }
     this.parseFunctions(documents)
     this.parseTypes(documents)
+    this.parseEnums(documents)
+    this.parseVariableDeclarations(documents)
   }
 
   /**
@@ -385,5 +408,178 @@ export class PineParser {
       }
     }
     Class.PineDocsManager.setParsed(parsedTypes, 'fields')
+  }
+
+  /**
+   * Parses enums from the provided documents.
+   * Extracts enum name and members using regex.
+   * @param documents - An array of documents to parse, each with a 'script' property.
+   */
+  parseEnums(documents: any[]) {
+    if (!Array.isArray(documents)) {
+      console.error('parseEnums: Documents must be an array, received:', documents)
+      return // Guard clause: Validate documents input
+    }
+
+    const allParsedEnums: any[] = []
+
+    for (const doc of documents) {
+      const { script, alias } = doc
+      if (typeof script !== 'string') {
+        console.warn('parseEnums: Script is not a string, skipping:', script)
+        continue // Guard clause: Skip non-string scripts
+      }
+
+      const enumMatches = script.matchAll(this.enumPattern)
+      const parsedEnumsArray: any[] = []
+
+      for (const enumMatch of enumMatches) {
+        const { exportKeyword, enumName, membersBlock } = enumMatch.groups!
+
+        const name = (alias ? alias + '.' : '') + enumName
+        const enumBuild: any = {
+          name: name,
+          originalName: enumName,
+          kind: exportKeyword ? 'UserExportEnum' : 'UserEnum',
+          members: [],
+        }
+
+        if (alias) {
+          enumBuild.libId = alias
+        }
+
+        if (membersBlock) {
+          const memberMatches = membersBlock.matchAll(this.enumMemberPattern)
+          for (const memberMatch of memberMatches) {
+            const { memberName, memberValue } = memberMatch.groups!
+            const memberDict: any = {
+              name: memberName,
+              kind: 'EnumMember',
+            }
+            if (memberValue) {
+              // Attempt to infer type of memberValue
+              if ((memberValue.startsWith('"') && memberValue.endsWith('"')) || (memberValue.startsWith("'") && memberValue.endsWith("'"))) {
+                memberDict.value = memberValue.slice(1, -1) // Store string without quotes
+              } else if (!isNaN(parseFloat(memberValue)) && isFinite(memberValue as any)) {
+                memberDict.value = parseFloat(memberValue) // Store as number
+              } else if (memberValue === 'true' || memberValue === 'false') {
+                memberDict.value = memberValue === 'true' // Store as boolean
+              } else {
+                memberDict.value = memberValue // Store as is (identifier or other)
+              }
+            }
+            enumBuild.members.push(memberDict)
+          }
+        }
+        parsedEnumsArray.push(enumBuild)
+      }
+
+      if (alias) {
+        this.parsedEnums[alias] = parsedEnumsArray
+      }
+      allParsedEnums.push(...parsedEnumsArray)
+    }
+    Class.PineDocsManager.setParsed(allParsedEnums, 'enum_members')
+  }
+
+  /**
+   * Parses variable declarations from the provided documents.
+   * Extracts variable name, explicit type, and attempts basic type inference.
+   * @param documents - An array of documents to parse, each with a 'script' property.
+   */
+  parseVariableDeclarations(documents: any[]) {
+    if (!Array.isArray(documents)) {
+      console.error('parseVariableDeclarations: Documents must be an array, received:', documents)
+      return
+    }
+
+    const allParsedVariables: any[] = []
+
+    for (const doc of documents) {
+      const { script, alias } = doc
+      if (typeof script !== 'string') {
+        console.warn('parseVariableDeclarations: Script is not a string, skipping:', script)
+        continue
+      }
+
+      // To avoid parsing variables inside function bodies for now,
+      // let's temporarily process only lines that seem to be global.
+      // This is a simplification. A proper approach would involve a more context-aware parser.
+      // For now, we'll iterate line by line and apply the regex.
+      // This will incorrectly pick up variables inside functions if they match the pattern.
+
+      const lines = script.split('\n');
+      for (const line of lines) {
+        // We apply the regex line by line. This is not perfect for multi-line assignments
+        // but is a starting point for typical single-line declarations.
+        const variableMatches = line.matchAll(this.variableDeclarationPattern)
+
+        for (const varMatch of variableMatches) {
+          const { variableName, explicitType, assignmentValue } = varMatch.groups!
+          let inferredType: string | undefined = explicitType
+
+          if (!inferredType && assignmentValue) {
+            const udtMatch = this.udtConstructorPattern.exec(assignmentValue)
+            if (udtMatch && udtMatch.groups?.udtName) {
+              inferredType = udtMatch.groups.udtName
+            } else {
+              const arrayMatch = this.arrayNewWithTypePattern.exec(assignmentValue)
+              if (arrayMatch && arrayMatch.groups?.arrayType) {
+                inferredType = `array<${arrayMatch.groups.arrayType}>`
+              } else if (/^".*"$/.test(assignmentValue.trim()) || /^'.*'$/.test(assignmentValue.trim())) {
+                inferredType = 'string'
+              } else if (/^true|false$/.test(assignmentValue.trim())) {
+                inferredType = 'bool'
+              } else if (/^[\-\+]?(\d+(\.\d*)?|\.\d+)(?:[eE][\-\+]?\d+)?$/.test(assignmentValue.trim())) {
+                // Improved number regex: handles integers, floats, scientific notation
+                // Check if it's an integer
+                if (/^[\-\+]?\d+$/.test(assignmentValue.trim()) && !assignmentValue.trim().includes('.')) {
+                    inferredType = 'int';
+                } else {
+                    inferredType = 'float';
+                }
+              } else if (/^\[.*\]$/.test(assignmentValue.trim())) {
+                // Basic array literal type inference - could be improved
+                // For now, let's call it 'array' - could try to infer element type later
+                inferredType = 'array';
+              } else if (/^map\.new<(\w+)\s*,\s*(\w+)>/.test(assignmentValue.trim())) {
+                const mapTypeMatch = /^map\.new<(?<keyType>\w+)\s*,\s*(?<valueType>\w+)>/.exec(assignmentValue.trim());
+                if (mapTypeMatch && mapTypeMatch.groups) {
+                  inferredType = `map<${mapTypeMatch.groups.keyType}, ${mapTypeMatch.groups.valueType}>`;
+                }
+              }
+              // TODO: Add more inference rules (e.g., from other variables, function calls)
+            }
+          }
+
+          if (variableName) { // Ensure variableName was captured
+            const variableBuild: any = {
+              name: (alias ? alias + '.' : '') + variableName,
+              originalName: variableName,
+              type: inferredType || 'any', // Default to 'any' if type couldn't be determined
+              kind: 'Variable',
+            }
+
+            if (alias) {
+              variableBuild.libId = alias
+            }
+            allParsedVariables.push(variableBuild)
+          }
+        }
+      }
+      if (alias) {
+        // If processing a library, store these variables under the alias.
+        // Note: This might overwrite if called multiple times for the same alias with different doc sets.
+        // Consider merging if that's a use case.
+        if (!this.parsedVariables[alias]) {
+        // this.parsedVariables[alias] = []; // Removed internal aliased storage
+        // }
+        // this.parsedVariables[alias].push(...allParsedVariables.filter(v => v.libId === alias));
+      }
+    }
+    // All variables from all documents (libs or main docs) in this parse run are collected in allParsedVariables.
+    // Then, a unique list is sent to PineDocsManager.
+    const uniqueVariables = Array.from(new Map(allParsedVariables.map(item => [item.name, item])).values());
+    Class.PineDocsManager.setParsed(uniqueVariables, 'variables')
   }
 }

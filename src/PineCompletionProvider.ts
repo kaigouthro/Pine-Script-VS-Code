@@ -98,7 +98,17 @@ export class PineCompletionProvider implements vscode.CompletionItemProvider {
       const {kind} = doc
       // Determine if the item is the default (applies to function params for now)
       // doc.doc refers to the original documentation object stored inside CompletionDoc
-      let preselect = doc.doc?.preselect ?? doc.default ?? false
+      let preselect = false; // Default preselect to false
+
+      if (argCompletion) {
+        // For argument completions, preselect the first argument (order0000)
+        if (doc.sortText === 'order0000') {
+          preselect = true;
+        }
+      } else {
+        // For non-argument completions, use existing logic
+        preselect = doc.doc?.preselect ?? doc.default ?? false;
+      }
 
       // name the label variable
       // 'name' parameter is the specific name for this completion (e.g. function name, method name)
@@ -149,6 +159,8 @@ export class PineCompletionProvider implements vscode.CompletionItemProvider {
       const completionItem = new vscode.CompletionItem(label, itemKind)
       completionItem.documentation = new vscode.MarkdownString(`${descriptionText}\n${extraDocs}\n\`\`\`pine\n${modifiedSyntax}\n\`\`\``)
       completionItem.detail = detailText
+      completionItem.sortText = doc.sortText // Apply sortText from CompletionDoc
+      completionItem.preselect = preselect // Apply preselect logic
 
       // Use a snippet string for the insert text
       let insertText = name // Use `name` from CompletionDoc which might be `fieldName=` or `functionName`
@@ -189,7 +201,7 @@ export class PineCompletionProvider implements vscode.CompletionItemProvider {
 
         // Set the replacement range and insert text of the completion item
         completionItem.insertText = insertText
-        completionItem.preselect = preselect
+        // completionItem.preselect = preselect; // Preselect is now handled above globally
         completionItem.range = new vscode.Range(new vscode.Position(position.line, wordStart), position)
 
         if (moveCursor) {
@@ -228,13 +240,13 @@ export class PineCompletionProvider implements vscode.CompletionItemProvider {
       const lowerKind = kind.toLowerCase()
 
       // Specific kind checks first
-      if (lowerKind === 'udt' || lowerKind === 'user type' || lowerKind.includes('udt from')) {
+      if (lowerKind === 'udt' || lowerKind === 'user type' || lowerKind.includes('udt from') || lowerKind === 'userexporttype') {
         return vscode.CompletionItemKind.Class // Or Struct, Class is common for UDTs
       }
-      if (lowerKind === 'enum' || lowerKind.includes('enum from')) {
+      if (lowerKind === 'enum' || lowerKind.includes('enum from') || lowerKind === 'userenum' || lowerKind === 'userexportenum') {
         return vscode.CompletionItemKind.Enum
       }
-      if (lowerKind === 'enummember' || lowerKind === 'enum member') { // Standardize to 'enummember' from service if possible
+      if (lowerKind === 'enummember' || lowerKind === 'enum member') { // Standardize to 'enummember' from service
         return vscode.CompletionItemKind.EnumMember
       }
       if (lowerKind === 'constructor' || lowerKind.includes('udt constructor')) {
@@ -273,7 +285,8 @@ export class PineCompletionProvider implements vscode.CompletionItemProvider {
         'user export function': vscode.CompletionItemKind.Function,
         'user method': vscode.CompletionItemKind.Method,
         'user function': vscode.CompletionItemKind.Function,
-        'user export type': vscode.CompletionItemKind.Class,
+        // 'user export type' is handled above by the 'udt' check which includes 'userexporttype'
+        // 'userenum' and 'userexportenum' are handled above by the 'enum' check.
         local: vscode.CompletionItemKind.Module,
         imported: vscode.CompletionItemKind.Module,
         integer: vscode.CompletionItemKind.Value,

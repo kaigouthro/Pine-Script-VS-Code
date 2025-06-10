@@ -383,76 +383,156 @@ export class PineDocsManager {
    */
   setParsed(docs: any[], keyType: string) {
     try {
-      const key = keyType === 'args' ? ['functions2', 'methods2', 'completionFunctions'] : ['UDT']
+      if (keyType === 'args' || keyType === 'fields') {
+        const keysToUpdate = keyType === 'args' ? ['functions2', 'methods2', 'completionFunctions'] : ['UDT']
 
-      for (const k of key) {
-        const currentMap = this.getMap(k)
+        for (const k of keysToUpdate) {
+          const currentMap = this.getMap(k)
 
-        for (const doc of docs) {
-          const { name } = doc
-          let currentDocEntry = currentMap.get(name)
+          for (const doc of docs) {
+            const { name } = doc
+            let currentDocEntry = currentMap.get(name)
 
-          if (currentDocEntry) {
-            // Update existing entry
-            // Prioritize details from PineParser (doc) for user-defined functions
-            currentDocEntry.kind = doc.kind || currentDocEntry.kind
-            currentDocEntry.body = doc.body || currentDocEntry.body
-            currentDocEntry.doc = doc.doc || currentDocEntry.doc // Parsed docstring
+            if (currentDocEntry) {
+              // Update existing entry
+              currentDocEntry.kind = doc.kind || currentDocEntry.kind
+              currentDocEntry.body = doc.body || currentDocEntry.body
+              currentDocEntry.doc = doc.doc || currentDocEntry.doc
 
-            if (doc.export !== undefined) {
-              currentDocEntry.export = doc.export
-            }
-            if (doc.method !== undefined) {
-              currentDocEntry.method = doc.method
-            }
-
-            // Merge arguments (keyType is 'args' for functions) or fields (keyType is 'fields' for UDTs)
-            if (doc[keyType] && doc[keyType].length > 0) {
-              if (!Array.isArray(currentDocEntry[keyType])) {
-                currentDocEntry[keyType] = []
+              if (doc.export !== undefined) {
+                currentDocEntry.export = doc.export
               }
-              for (let parsedMember of doc[keyType]) {
-                // Can be an argument or a field
-                const memberName = parsedMember.name
-                let currentMember = currentDocEntry[keyType].find((m: any) => m.name === memberName)
+              if (doc.method !== undefined) {
+                currentDocEntry.method = doc.method
+              }
+              if (doc.libId !== undefined) {
+                currentDocEntry.libId = doc.libId
+              }
 
-                if (currentMember) {
-                  // Update properties of the existing member (arg or field)
-                  currentMember.type = parsedMember.type || currentMember.type
-                  currentMember.kind = parsedMember.kind || currentMember.kind // Ensure kind is updated
-                  if (parsedMember.default !== undefined) {
-                    // Check for undefined to allow setting null or empty string defaults
-                    currentMember.default = parsedMember.default
-                  }
-                  if (parsedMember.isConst !== undefined) {
-                    // Ensure isConst is updated
-                    currentMember.isConst = parsedMember.isConst
-                  }
-                  if (keyType === 'args') {
-                    // Argument-specific properties
-                    currentMember.required = parsedMember.required // Note: UDT fields don't typically have 'required' in the same way as func args
-                    if (parsedMember.modifier) {
-                      currentMember.modifier = parsedMember.modifier
+              // Merge arguments or fields
+              const membersKey = keyType // 'args' or 'fields'
+              if (doc[membersKey] && doc[membersKey].length > 0) {
+                if (!Array.isArray(currentDocEntry[membersKey])) {
+                  currentDocEntry[membersKey] = []
+                }
+                for (let parsedMember of doc[membersKey]) {
+                  const memberName = parsedMember.name
+                  let currentMember = currentDocEntry[membersKey].find((m: any) => m.name === memberName)
+
+                  if (currentMember) {
+                    currentMember.type = parsedMember.type || currentMember.type
+                    currentMember.kind = parsedMember.kind || currentMember.kind
+                    if (parsedMember.default !== undefined) {
+                      currentMember.default = parsedMember.default
                     }
+                    if (parsedMember.isConst !== undefined) {
+                      currentMember.isConst = parsedMember.isConst
+                    }
+                    if (parsedMember.desc !== undefined) {
+                        currentMember.desc = parsedMember.desc
+                    }
+                    if (keyType === 'args') {
+                      currentMember.required = parsedMember.required !== undefined ? parsedMember.required : currentMember.required
+                      if (parsedMember.modifier) {
+                        currentMember.modifier = parsedMember.modifier
+                      }
+                    }
+                  } else {
+                    currentDocEntry[membersKey].push(parsedMember)
                   }
+                }
+              }
+              currentMap.set(name, currentDocEntry)
+            } else {
+              // Add new entry if it doesn't exist
+              currentMap.set(name, doc)
+            }
+          }
+          this.setDocs([{ docs: Array.from(currentMap.values()) }], k)
+        }
+      } else if (keyType === 'enum_members') {
+        const key = 'enums' // Target 'this.enumsDocs'
+        const currentEnumMap = this.getMap(key)
+
+        for (const enumDoc of docs) {
+          const { name, members } = enumDoc
+          let currentEnumEntry = currentEnumMap.get(name)
+
+          if (currentEnumEntry) {
+            // Update existing enum entry
+            currentEnumEntry.kind = enumDoc.kind || currentEnumEntry.kind
+            currentEnumEntry.doc = enumDoc.doc || currentEnumEntry.doc // Assuming enums might have docstrings
+            if (enumDoc.export !== undefined) {
+              currentEnumEntry.export = enumDoc.export
+            }
+            if (enumDoc.libId !== undefined) {
+                currentEnumEntry.libId = enumDoc.libId
+            }
+            currentEnumEntry.originalName = enumDoc.originalName || currentEnumEntry.originalName
+
+
+            // Merge members
+            if (members && members.length > 0) {
+              if (!Array.isArray(currentEnumEntry.members)) {
+                currentEnumEntry.members = []
+              }
+              const existingMembersMap = new Map(currentEnumEntry.members.map((m: any) => [m.name, m]))
+
+              for (const newMember of members) {
+                let existingMember = existingMembersMap.get(newMember.name)
+                if (existingMember) {
+                  // Update existing member
+                  existingMember.kind = newMember.kind || existingMember.kind
+                  if (newMember.value !== undefined) {
+                    existingMember.value = newMember.value
+                  }
+                  // Add other properties if enums members can have them (e.g., docstrings per member)
+                  // if (newMember.doc !== undefined) { existingMember.doc = newMember.doc; }
                 } else {
-                  // Add new member if not found
-                  currentDocEntry[keyType].push(parsedMember)
+                  // Add new member
+                  currentEnumEntry.members.push(newMember)
                 }
               }
             }
-            currentMap.set(name, currentDocEntry)
-          } else if (keyType === 'args' || keyType === 'fields') {
-            // Add new entry if it doesn't exist in the map (for functions/args or UDTs/fields)
-            currentMap.set(name, doc)
+            currentEnumMap.set(name, currentEnumEntry)
+          } else {
+            // Add new enum entry if it doesn't exist
+            currentEnumMap.set(name, enumDoc)
           }
         }
-        // Save the updated map.
-        // The structure expected by setDocs is [{ docs: [...] }]
-        this.setDocs([{ docs: Array.from(currentMap.values()) }], k)
+        // Save the updated enum map
+        this.setDocs([{ docs: Array.from(currentEnumMap.values()) }], key)
+      } else if (keyType === 'variables') {
+        const key = 'variables2' // Target 'this.variables2Docs'
+        const currentMap = this.getMap(key) // Get existing script variables
+
+        for (const variableDoc of docs) {
+          const { name } = variableDoc
+          let currentDocEntry = currentMap.get(name)
+
+          if (currentDocEntry) {
+            // Update existing variable entry
+            currentDocEntry.kind = variableDoc.kind || currentDocEntry.kind
+            currentDocEntry.type = variableDoc.type || currentDocEntry.type
+            currentDocEntry.doc = variableDoc.doc || currentDocEntry.doc // If variables can have docstrings
+            if (variableDoc.libId !== undefined) {
+              currentDocEntry.libId = variableDoc.libId
+            }
+            if (variableDoc.originalName !== undefined) {
+              currentDocEntry.originalName = variableDoc.originalName
+            }
+            // Add any other properties that might be relevant for variables
+            currentMap.set(name, currentDocEntry)
+          } else {
+            // Add new variable entry if it doesn't exist
+            currentMap.set(name, variableDoc)
+          }
+        }
+        // Save the updated variables map
+        this.setDocs([{ docs: Array.from(currentMap.values()) }], key)
       }
     } catch (error) {
-      console.error(error)
+      console.error('Error in setParsed:', error)
     }
   }
 
