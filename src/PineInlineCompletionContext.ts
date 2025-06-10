@@ -134,200 +134,6 @@ export class PineInlineCompletionContext implements vscode.InlineCompletionItemP
   }
 
   /**
-   * Provides inline completion items for method completions.
-   * @param document - The current document.
-   * @param position - The current position within the document.
-   * @param match - The text to match.
-   * @returns null
-   */
-  async methodInlineCompletions(document: vscode.TextDocument, position: vscode.Position, match: string) {
-    try {
-      const map = Class.PineDocsManager.getMap('methods', 'methods2')
-
-      let namespace: string = ''
-      let funcName: string = ''
-
-      if (match.includes('.')) {
-        const split = match.split('.')
-        if (split.length > 1) {
-          namespace = split.shift() ?? ''
-          funcName = split.join('.') ?? ''
-        }
-      } else {
-        return []
-      }
-
-      if (!namespace || Class.PineDocsManager.getAliases.includes(namespace)) {
-        return []
-      }
-
-      const lowerNamespace = namespace.toLowerCase()
-      const lowerFuncName = funcName.toLowerCase()
-      const fullName = `${lowerNamespace}.${lowerFuncName}`
-
-      for (let [name, doc] of map.entries()) {
-        if (!doc.isMethod || name[0] === '*') {
-          continue
-        }
-
-        let docNameSplitLast: string | null = null
-        if (name.includes('.')) {
-          const docNameSplit = name.split('.')
-          docNameSplitLast = docNameSplit.pop() ?? null
-        } else {
-          docNameSplitLast = name
-        }
-
-        const namejoin = `${namespace}.${docNameSplitLast}`
-        const lowerNameJoin = namejoin.toLowerCase()
-
-        if (lowerNamespace && docNameSplitLast) {
-          let typoTrack = 0
-          let minorTypoCount = 0
-          let matchIndex = 0
-
-          for (let i = 0; i < fullName.length; i++) {
-            const char = fullName[i]
-            const foundIndex = lowerNameJoin.indexOf(char, matchIndex)
-
-            if (foundIndex === -1) {
-              typoTrack++
-              if (typoTrack > 1) {
-                break
-              }
-            } else if (foundIndex !== matchIndex) {
-              minorTypoCount++
-              if (minorTypoCount >= 3) {
-                break
-              }
-              matchIndex = foundIndex + 1
-            } else {
-              matchIndex++
-            }
-          }
-
-          if (typoTrack > 1 || minorTypoCount >= 3) {
-            continue
-          }
-
-          let nType = Helpers.identifyType(namespace)
-          let dType = Helpers.getThisTypes(doc)
-
-          if (!nType || !dType) {
-            continue
-          }
-
-          // Convert array types to a more consistent format
-          nType = nType.replace(/([\w.]+)\[\]/, 'array<$1>')
-          dType = dType.replace(/([\w.]+)\[\]/, 'array<$1>')
-
-          // Normalize dType to one of the basic types if it includes any of 'array', 'matrix', 'map'
-          const basicTypes = ['array', 'matrix', 'map']
-          const replacementTypes = ['any', 'type', 'array', 'matrix', 'map']
-
-          for (const t of basicTypes) {
-            if (dType.includes(t)) {
-              for (const r of replacementTypes) {
-                if (dType.includes(r) || dType === r) {
-                  dType = t
-                  break
-                }
-              }
-              break
-            }
-          }
-
-          // Ensure types are strings and perform the final type check
-          if (typeof nType !== 'string' || typeof dType !== 'string') {
-            continue
-          }
-
-          if (!nType.includes(dType)) {
-            continue
-          }
-
-          const completionItem = await this.createInlineCompletionItem(document, name, namespace, doc, position, false)
-          if (completionItem) {
-            this.completionItems.push(completionItem)
-          }
-        }
-      }
-    } catch (error) {
-      console.error('An error occurred:', error)
-      return []
-    }
-  }
-
-  /**
-   * Provides inline completion items for function completions.
-   * @param document - The current document.
-   * @param position - The current position within the document.
-   * @param match - The text to match.
-   * @returns null
-   */
-  async functionInlineCompletions(document: vscode.TextDocument, position: vscode.Position, match: string) {
-    try {
-      // Get the documentation map
-      const map = Class.PineDocsManager.getMap(
-        'functions',
-        'completionFunctions',
-        'variables',
-        'variables2',
-        'constants',
-        'UDT',
-        'types',
-        'imports',
-        'controls',
-        'annotations',
-        'fields',
-        'fields2',
-      )
-
-      const lowerMatch = match.toLowerCase()
-      const matchLength = match.length
-
-      for (const [name, doc] of map.entries()) {
-        const lowerName = name.toLowerCase()
-        if (lowerName.startsWith(lowerMatch[0])) {
-          let minorTypoCount = 0
-          let majorTypoCount = 0
-          let matchIndex = 0
-
-          for (let i = 0; i < matchLength; i++) {
-            const char = lowerMatch[i]
-            const foundIndex = lowerName.indexOf(char, matchIndex)
-
-            if (foundIndex === -1) {
-              majorTypoCount++
-              if (majorTypoCount > 1) {
-                break
-              }
-            } else if (foundIndex !== matchIndex) {
-              minorTypoCount++
-              if (minorTypoCount >= 3) {
-                break
-              }
-              matchIndex = foundIndex + 1
-            } else {
-              matchIndex++
-            }
-          }
-
-          if (majorTypoCount <= 1 && minorTypoCount < 3) {
-            const completionItem = await this.createInlineCompletionItem(document, name, null, doc, position, false)
-            if (completionItem) {
-              this.completionItems.push(completionItem)
-            }
-          }
-        }
-      }
-    } catch (error) {
-      console.error(error)
-      return []
-    }
-  }
-
-  /**
    * Provides inline completion items for the main completions.
    * @param document - The current document.
    * @param position - The current position within the document.
@@ -347,33 +153,43 @@ export class PineInlineCompletionContext implements vscode.InlineCompletionItemP
         return []
       }
 
-      // Check if we are right after an opening parenthesis (possibly with whitespace)
-      const argumentContextRegex = /\([\s]*$/
-      if (argumentContextRegex.test(linePrefix.trim())) {
-        // Trigger argument completions directly
-        const functionCallMatch = linePrefix.trim().match(/(\w+)\([\s]*$/) // Capture function name if needed for context
-        if (functionCallMatch && functionCallMatch[1]) {
-          const functionName = functionCallMatch[1]
-          const functionDoc = Class.PineDocsManager.getFunctionDocs(functionName) // Use the new getFunctionDocs
+      // Argument context is handled by the regular SignatureHelp provider now,
+      // so we can simplify this part for inline suggestions.
 
-          if (functionDoc && functionDoc.args) {
-            // Check if functionDoc and args exist
-            PineSharedCompletionState.setCompletions(functionDoc.args) // Set completions from functionDoc.args
-            PineSharedCompletionState.setArgumentCompletionsFlag(true) // Ensure flag is set
-            return await this.argumentInlineCompletions(document, position, functionDoc.args) // Pass functionDoc.args to argumentInlineCompletions
-          }
-        }
-        return [] // If no function name or args found in this context, return empty
-      }
-
-      // If there are no completions in the shared state, match the text before the cursor
+      // Match the word being typed
       const match = linePrefix.match(/[\w.]+$/)?.[0].trim()
       if (!match) {
         return []
       }
 
-      await this.functionInlineCompletions(document, position, match)
-      await this.methodInlineCompletions(document, position, match)
+      // Use the centralized PineCompletionService
+      const allCompletions = [
+        ...Class.pineCompletionService.getGeneralCompletions(match),
+        ...Class.pineCompletionService.getMethodCompletions(match),
+        ...Class.pineCompletionService.getUdtConstructorCompletions(match),
+        ...Class.pineCompletionService.getInstanceFieldCompletions(match),
+      ];
+
+      // Inline completions usually show one best-fit item. We'll find the first good match.
+      if (allCompletions.length > 0) {
+        // For simplicity, we'll take the first result from the service.
+        // A more advanced implementation could score them.
+        const bestSuggestion = allCompletions[0];
+
+        // createInlineCompletionItem expects the full doc object.
+        const vscodeCompletionItem = await this.createInlineCompletionItem(
+          document,
+          bestSuggestion.name,
+          bestSuggestion.namespace,
+          bestSuggestion, // Pass the whole CompletionDoc object
+          position,
+          false,
+        )
+
+        if (vscodeCompletionItem) {
+          this.completionItems.push(vscodeCompletionItem);
+        }
+      }
 
       if (this.completionItems.length > 0) {
         return new vscode.InlineCompletionList(this.completionItems)
