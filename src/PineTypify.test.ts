@@ -210,6 +210,76 @@ describe('PineTypify', () => {
         expect(PineTypify.parseType('<int>')).toEqual({ ...defaultExpectedBase, baseType: '<int>' });
     });
   });
+
+  describe('stringifyParsedType', () => {
+    const defaultParsedBase: Omit<ParsedType, 'baseType'> = {
+        modifier: undefined,
+        lib: undefined,
+        containerType: undefined,
+        elementType: undefined,
+        keyType: undefined,
+        valueType: undefined,
+    };
+
+    it('should stringify simple types', () => {
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'int' })).toBe('int');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'float' })).toBe('float');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'string' })).toBe('string');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'bool' })).toBe('bool');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'color' })).toBe('color');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'box' })).toBe('box');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'line' })).toBe('line');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'label' })).toBe('label');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'table' })).toBe('table');
+    });
+
+    it('should stringify types with modifiers', () => {
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'float', modifier: 'series' })).toBe('series float');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'color', modifier: 'const' })).toBe('const color');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'string', modifier: 'input' })).toBe('input string');
+    });
+
+    it('should stringify library qualified types', () => {
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'MyType', lib: 'MyLib' })).toBe('MyLib.MyType');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'MyType', lib: 'MyLib', modifier: 'series' })).toBe('series MyLib.MyType');
+    });
+
+    it('should stringify array types', () => {
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'array', containerType: 'array', elementType: { ...defaultParsedBase, baseType: 'int' } })).toBe('array<int>');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'array', containerType: 'array', elementType: { ...defaultParsedBase, baseType: 'Point', lib: 'MyLib' } })).toBe('array<MyLib.Point>');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'array', containerType: 'array', elementType: { ...defaultParsedBase, baseType: 'color' }, modifier: 'series' })).toBe('series array<color>');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'array', containerType: 'array', elementType: { ...defaultParsedBase, baseType: 'map', containerType: 'map', keyType: { ...defaultParsedBase, baseType: 'string' }, valueType: { ...defaultParsedBase, baseType: 'float' } } })).toBe('array<map<string, float>>');
+    });
+
+    it('should stringify matrix types', () => {
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'matrix', containerType: 'matrix', elementType: { ...defaultParsedBase, baseType: 'int' } })).toBe('matrix<int>');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'matrix', containerType: 'matrix', elementType: { ...defaultParsedBase, baseType: 'Point', lib: 'MyLib' } })).toBe('matrix<MyLib.Point>');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'matrix', containerType: 'matrix', elementType: { ...defaultParsedBase, baseType: 'float' }, modifier: 'const' })).toBe('const matrix<float>');
+    });
+
+    it('should stringify map types', () => {
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'map', containerType: 'map', keyType: { ...defaultParsedBase, baseType: 'string' }, valueType: { ...defaultParsedBase, baseType: 'int' } })).toBe('map<string, int>');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'map', containerType: 'map', keyType: { ...defaultParsedBase, baseType: 'Key', lib: 'MyLib' }, valueType: { ...defaultParsedBase, baseType: 'Value', lib: 'TheirLib' } })).toBe('map<MyLib.Key, TheirLib.Value>');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'map', containerType: 'map', keyType: { ...defaultParsedBase, baseType: 'string' }, valueType: { ...defaultParsedBase, baseType: 'bool' }, modifier: 'input' })).toBe('input map<string, bool>');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'map', containerType: 'map', keyType: { ...defaultParsedBase, baseType: 'string' }, valueType: { ...defaultParsedBase, baseType: 'Data', lib: 'UDT' }, lib: 'MyLib' })).toBe('MyLib.map<string, UDT.Data>');
+    });
+
+    it('should stringify complex/nested types', () => {
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'array', containerType: 'array', elementType: { ...defaultParsedBase, baseType: 'map', containerType: 'map', keyType: { ...defaultParsedBase, baseType: 'string' }, valueType: { ...defaultParsedBase, baseType: 'Data', lib: 'UDT' } }, modifier: 'series', lib: 'WrapperLib' })).toBe('series WrapperLib.array<map<string, UDT.Data>>');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'map', containerType: 'map', keyType: { ...defaultParsedBase, baseType: 'array', containerType: 'array', elementType: { ...defaultParsedBase, baseType: 'int' } }, valueType: { ...defaultParsedBase, baseType: 'matrix', containerType: 'matrix', elementType: { ...defaultParsedBase, baseType: 'float' } }, modifier: 'const' })).toBe('const map<array<int>, matrix<float>>');
+    });
+
+    it('should handle edge cases and unknown types', () => {
+      expect(PineTypify.stringifyParsedType(null as any)).toBe('unknown');
+      expect(PineTypify.stringifyParsedType(undefined as any)).toBe('unknown');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'unknown' })).toBe('unknown');
+      expect(PineTypify.stringifyParsedType({} as ParsedType)).toBe('unknown');
+      expect(PineTypify.stringifyParsedType({ baseType: 'int', modifier: undefined, lib: undefined })).toBe('int');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'array', containerType: 'array', elementType: { ...defaultParsedBase, baseType: 'unknown'} })).toBe('array<unknown>');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'map', containerType: 'map', keyType: { ...defaultParsedBase, baseType: 'string'}, valueType: { ...defaultParsedBase, baseType: 'unknown'} })).toBe('map<string, unknown>');
+      expect(PineTypify.stringifyParsedType({ ...defaultParsedBase, baseType: 'map', containerType: 'map', keyType: { ...defaultParsedBase, baseType: 'unknown'}, valueType: { ...defaultParsedBase, baseType: 'int'} })).toBe('map<unknown, int>');
+    });
+  });
 });
 
 describe('EditorUtils', () => {
