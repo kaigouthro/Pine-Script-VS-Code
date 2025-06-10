@@ -124,50 +124,45 @@ export class PineCompletionService {
     }
 
     // Get maps for general top-level suggestions
-    const mapsToSearch = this.docsManager.getMap(
+    const categoriesToSearch: (keyof typeof this.docsManager.languageModel)[] = [
       'functions',
-      'completionFunctions', // Note: Original code included this, assuming it's a valid map key for functions
       'variables',
-      'variables2',
-      'constants', // Top-level constants like `na`, `barstate.islast` (these might also be under namespaces)
-      'UDT', // User Defined Types
-      'enums', // Enums (newly added)
-      'types', // Built-in types like 'integer', 'string'
-      'imports', // The `import` keyword itself or imported modules? Unclear. Assuming symbols brought *in* by imports.
-      'controls', // 'if', 'for', 'while', etc.
-      'annotations', // '@version', '@study', etc.
-    )
+      'constants',
+      'types', // Contains UDTs and built-in types
+      'enums',
+      'imports',
+      'controls',
+      'annotations'
+    ];
 
-    const lowerMatch = match.toLowerCase()
-    // const matchLength = match.length; // Not needed with checkTypoMatch
+    const lowerMatch = match.toLowerCase();
 
-    for (const [name, doc] of mapsToSearch.entries()) {
-      if (!name || name[0] === '*') {
-        continue // Skip items with no name or starting with '*' (if any)
-      }
+    for (const category of categoriesToSearch) {
+      const currentMap = this.docsManager.getMap(category);
+      for (const [name, doc] of currentMap.entries()) {
+        if (!name || name[0] === '*') { // Ensure doc and doc.name exist
+          continue;
+        }
 
-      const lowerName = name.toLowerCase()
-
-      // Basic prefix check first for potential performance gain on large maps
-      // If the user typed "pl", only check items starting with "p" or "pl".
-      // Let's check if the name starts with the typed text OR if the typo match applies.
-      // This allows "plot" to match "plt" even if "plot" doesn't start with "plt".
-      if (lowerName.startsWith(lowerMatch) || this.checkTypoMatch(match, name)) {
-        completions.push({
-          name: name, // The identifier name
-          doc: doc, // Original documentation object
-          namespace: null, // Top-level items have no namespace
-          isMethod: doc?.isMethod ?? false,
-          kind: doc?.kind, // Should be "UDT", "Enum", "Function", "Constant" etc.
-          type: doc?.type, // For variables/constants, their type. For UDT/Enum, its own name or "type"/"enum". For functions, return type summary.
-          isConst: doc?.isConst,
-          default: doc?.default,
-          description: doc?.description, // Use standardized description field
-          libId: doc?.libId, // Populate libId
-          args: doc?.args, // Populate args for functions/constructors
-          returnTypes: doc?.returnedTypes, // Populate returnTypes for functions
-          fields: doc?.fields || doc?.members, // Populate fields for UDTs or members for Enums
-        })
+        const lowerName = name.toLowerCase();
+        if (lowerName.startsWith(lowerMatch) || this.checkTypoMatch(match, name)) {
+          completions.push({
+            name: name,
+            doc: doc,
+            namespace: null,
+            isMethod: doc?.isMethod ?? false,
+            kind: doc?.kind,
+            type: doc?.type,
+            isConst: doc?.isConst,
+            default: doc?.default,
+            description: doc?.description,
+            libId: doc?.libId,
+            args: doc?.args,
+            returnTypes: doc?.returnedTypes,
+            fields: doc?.fields || doc?.members, // UDTs have 'fields', Enums have 'members'
+            // isBuiltIn: doc?.isBuiltIn // Pass this if provider needs it
+          });
+        }
       }
     }
     return completions
@@ -195,16 +190,24 @@ export class PineCompletionService {
       return completions
     }
 
-    const methodsMap = this.docsManager.getMap('methods', 'methods2')
+    // const methodsMap = this.docsManager.getMap('methods', 'methods2') // Old way
+    const functionsMap = this.docsManager.getMap('functions');
     // Original code had an alias check. Let's ignore it for now unless its purpose is clear.
     // if (this.docsManager.getAliases().includes(variableOrNamespace)) return []; // This check seems counter-intuitive if aliases have methods.
 
     // Determine the type of the variable/namespace before the dot.
-    const potentialType = Helpers.identifyType(variableOrNamespace)
+    const potentialType = Helpers.identifyType(variableOrNamespace) // This helper might need to know about languageModel.variables
 
-    for (const [name, doc] of methodsMap.entries()) {
-      if (!doc.isMethod || name[0] === '*') {
-        continue // Skip non-methods or internal items
+    for (const [name, doc] of functionsMap.entries()) {
+      // Filter for methods: they should have 'isMethod' true or a 'thisType'
+      if (!doc.isMethod && !doc.thisType) {
+        continue;
+      }
+      // Ensure kind is 'Method' if it passed the above (ingestLintResponse should handle this)
+      // doc.kind = 'Method'; // Or verify it's already set
+
+      if (name[0] === '*') { // Skip internal items if any
+        continue;
       }
 
       // Expected format in map is likely `namespace.methodName`
@@ -292,9 +295,9 @@ export class PineCompletionService {
       return completions
     }
 
-    const udtMap = this.docsManager.getMap('UDT', 'types') // UDT definitions are in these maps
+    const udtMap = this.docsManager.getMap('types'); // UDTs are stored in 'types' map
 
-    const udtDoc = udtMap.get(potentialUdtName)
+    const udtDoc = udtMap.get(potentialUdtName);
 
     // Suggest 'new()' if the part before the dot is a known UDT name
     // The user might type 'MyType.' and we suggest 'new()'.
@@ -304,12 +307,12 @@ export class PineCompletionService {
     // Let's stick to suggesting 'new()' only when the match is `UdtName.`.
     // The provider can filter this if the user types something like `MyType.ne`.
 
-    // Fetch the UDT constructor from the 'functions' map, as per new lint format
-    const constructorName = `${potentialUdtName}.new`
-    const functionsMap = this.docsManager.getMap('functions', 'completionFunctions')
-    const constructorDoc = functionsMap.get(constructorName)
+    // Fetch the UDT constructor from the 'functions' map
+    const constructorName = `${potentialUdtName}.new`;
+    const allFunctionsMap = this.docsManager.getMap('functions');
+    const constructorDoc = allFunctionsMap.get(constructorName);
 
-    if (constructorDoc) {
+    if (constructorDoc && (constructorDoc.kind === 'Constructor' || constructorName.endsWith('.new'))) {
       // If the specific "MyType.new" function doc is found
       completions.push({
         name: 'new()', // Suggest "new()"
@@ -323,24 +326,23 @@ export class PineCompletionService {
       })
     } else {
       // Fallback if specific "MyType.new" is not found in functions map,
-      // but potentialUdtName is a known UDT. (Less likely with new lint format)
-      const udtMap = this.docsManager.getMap('UDT', 'types')
-      const udtDoc = udtMap.get(potentialUdtName)
-      if (udtDoc) {
+      // but potentialUdtName is a known UDT.
+      const typesMap = this.docsManager.getMap('types'); // UDTs are in 'types'
+      const fallbackUdtDoc = typesMap.get(potentialUdtName);
+      if (fallbackUdtDoc) { // Ensure it's actually 'udtDoc' from the outer scope if that's intended
         completions.push({
           name: 'new()',
-          doc: udtDoc, // Link to the UDT documentation
+          doc: fallbackUdtDoc, // Link to the UDT documentation
           namespace: potentialUdtName,
           kind: 'Constructor',
-          description: udtDoc?.description || `Creates a new instance of \`${potentialUdtName}\`.`, // Use standardized description
-          libId: udtDoc.libId, // UDT itself might have a libId
-          // args might be part of udtDoc or need to be inferred/empty
+          description: fallbackUdtDoc?.description || `Creates a new instance of \`${potentialUdtName}\`.`,
+          libId: fallbackUdtDoc.libId,
           args:
-            udtDoc.args ||
-            (udtDoc.fields
-              ? udtDoc.fields.map((f: any) => ({ name: f.name, type: f.type, desc: f.desc, required: false }))
-              : []), // Attempt to use UDT fields as potential constructor args
-          returnTypes: [potentialUdtName], // Return type is the UDT itself
+            fallbackUdtDoc.args ||
+            (fallbackUdtDoc.fields
+              ? fallbackUdtDoc.fields.map((f: any) => ({ name: f.name, type: f.type, desc: f.desc, required: false }))
+              : []),
+          returnTypes: [potentialUdtName],
         })
       }
     }
@@ -369,41 +371,50 @@ export class PineCompletionService {
     let currentNamespaceForCompletionDoc = '' // Builds up the path like "myUdtVar.field1"
     let isCurrentSourceEnum = false // Flag to indicate if currentMembers are from an Enum
 
-    const firstPart = parts[0]
-    const variableDoc = this.docsManager.getMap('variables', 'variables2').get(firstPart)
+    const firstPart = parts[0];
+    const variablesMap = this.docsManager.getMap('variables');
+    const variableDoc = variablesMap.get(firstPart);
+
+    const typesMap = this.docsManager.getMap('types'); // For UDTs
+    const enumsMap = this.docsManager.getMap('enums');
 
     if (variableDoc && variableDoc.type) {
-      currentTypeName = this.cleanTypeName(variableDoc.type)
-      currentNamespaceForCompletionDoc = firstPart // Namespace is the variable name itself
-      const initialTypeDef = this.docsManager.getMap('UDT').get(currentTypeName) // UDTs have .fields
+      currentTypeName = this.cleanTypeName(variableDoc.type);
+      currentNamespaceForCompletionDoc = firstPart;
+      const initialTypeDef = typesMap.get(currentTypeName); // UDTs are in 'types'
       if (initialTypeDef && initialTypeDef.fields) {
-        currentMembers = initialTypeDef.fields
-        currentLibId = initialTypeDef.libId // LibId of the UDT definition
+        currentMembers = initialTypeDef.fields;
+        currentLibId = initialTypeDef.libId;
+        isCurrentSourceEnum = false; // Explicitly set
       } else {
-        // If not a UDT, could it be an enum for which fields are being accessed?
-        // Enums usually don't have fields accessed via '.', but members.
-        // Pine Script doesn't have `enum.member.field` syntax.
-        // So if variableDoc.type resolves to an enum, currentMembers should be null here for field access.
-        currentMembers = null;
+         // Check if the type name corresponds to an enum
+        const initialEnumDef = enumsMap.get(currentTypeName);
+        if (initialEnumDef && initialEnumDef.members) {
+            currentMembers = initialEnumDef.members;
+            currentLibId = initialEnumDef.libId;
+            isCurrentSourceEnum = true;
+        } else {
+            currentMembers = null;
+        }
       }
     } else {
-      // Not a variable, maybe a UDT or Enum name directly (e.g., user types "MyUDT." or "MyEnum.")
-      const udtOrEnumNameCandidate = this.cleanTypeName(firstPart)
-      const udtDoc = this.docsManager.getMap('UDT').get(udtOrEnumNameCandidate)
+      // Not a variable, maybe a UDT or Enum name directly
+      const udtOrEnumNameCandidate = this.cleanTypeName(firstPart);
+      const udtDoc = typesMap.get(udtOrEnumNameCandidate);
       if (udtDoc && udtDoc.fields) {
-        currentTypeName = udtOrEnumNameCandidate
-        currentLibId = udtDoc.libId
-        currentMembers = udtDoc.fields
-        currentNamespaceForCompletionDoc = firstPart // Namespace is the UDT name
-        isCurrentSourceEnum = false
+        currentTypeName = udtOrEnumNameCandidate;
+        currentLibId = udtDoc.libId;
+        currentMembers = udtDoc.fields;
+        currentNamespaceForCompletionDoc = firstPart;
+        isCurrentSourceEnum = false;
       } else {
-        const enumDoc = this.docsManager.getMap('enums').get(udtOrEnumNameCandidate)
+        const enumDoc = enumsMap.get(udtOrEnumNameCandidate);
         if (enumDoc && enumDoc.members) {
-          currentTypeName = udtOrEnumNameCandidate // This is an Enum
-          currentLibId = enumDoc.libId
-          currentMembers = enumDoc.members // Suggest enum members
-          currentNamespaceForCompletionDoc = firstPart // Namespace is the Enum name
-          isCurrentSourceEnum = true
+          currentTypeName = udtOrEnumNameCandidate;
+          currentLibId = enumDoc.libId;
+          currentMembers = enumDoc.members;
+          currentNamespaceForCompletionDoc = firstPart;
+          isCurrentSourceEnum = true;
         }
       }
     }
@@ -420,17 +431,28 @@ export class PineCompletionService {
       const foundField = currentMembers.find((f: any) => f.name === segmentName)
 
       if (foundField && foundField.type) {
-        const fieldActualType = this.cleanTypeName(foundField.type)
-        // A field's type must resolve to another UDT to have further .field access
-        const nestedTypeDef = this.docsManager.getMap('UDT').get(fieldActualType)
+        const fieldActualType = this.cleanTypeName(foundField.type);
+        const nestedTypeDef = typesMap.get(fieldActualType); // UDTs are in 'types'
         if (nestedTypeDef && nestedTypeDef.fields) {
-          currentTypeName = fieldActualType // The type of the current field, which is a UDT
-          currentMembers = nestedTypeDef.fields // These are the members for the *next* segment's lookup
-          currentLibId = nestedTypeDef.libId // LibId of this nested UDT
-          currentNamespaceForCompletionDoc = `${currentNamespaceForCompletionDoc}.${segmentName}`
+          currentTypeName = fieldActualType;
+          currentMembers = nestedTypeDef.fields;
+          currentLibId = nestedTypeDef.libId;
+          currentNamespaceForCompletionDoc = `${currentNamespaceForCompletionDoc}.${segmentName}`;
+          isCurrentSourceEnum = false; // If we are traversing fields, it's a UDT context
         } else {
-          // Field's type isn't a UDT with fields, so path ends here for further dot access.
-          currentTypeName = null; currentMembers = null; currentLibId = undefined; break;
+           // If not a UDT, check if it's an Enum (though enums don't have nested members via dot)
+           const nestedEnumDef = enumsMap.get(fieldActualType);
+           if (nestedEnumDef && nestedEnumDef.members) {
+             // This case is unlikely for PineScript (e.g. myVar.enumField.ENUM_MEMBER)
+             // but if fieldActualType was an enum name:
+             currentTypeName = fieldActualType;
+             currentMembers = nestedEnumDef.members;
+             currentLibId = nestedEnumDef.libId;
+             currentNamespaceForCompletionDoc = `${currentNamespaceForCompletionDoc}.${segmentName}`;
+             isCurrentSourceEnum = true;
+           } else {
+            currentTypeName = null; currentMembers = null; currentLibId = undefined; break;
+           }
         }
       } else {
         // Segment (field) not found in parent UDT, or field has no type. Path ends.
@@ -484,13 +506,12 @@ export class PineCompletionService {
     // Fallback for built-in namespaces (e.g. color.red, math.abs)
     // This should only trigger if the UDT/Enum path resolution above yielded no completions.
     // And typically, these are direct lookups like `namespace.member`, so `parts.length === 2`.
-    if (parts.length === 2 && completions.length === 0) {
-      const namespaceForBuiltins = parts[0]
-      const partialNameForBuiltins = parts[1]
-      const lowerNamespaceForBuiltins = namespaceForBuiltins.toLowerCase()
-      const constantsMap = this.docsManager.getMap('constants')
+    if (parts.length === 2 && completions.length === 0) { // Built-in namespaces like 'color', 'math'
+      const namespaceForBuiltins = parts[0];
+      const partialNameForBuiltins = parts[1];
 
-      for (const [constName, constDoc] of constantsMap.entries()) {
+      const builtInConstantsMap = this.docsManager.getMap('constants');
+      for (const [constName, constDoc] of builtInConstantsMap.entries()) {
         // Check if constant belongs to the namespace (e.g. constDoc.namespace === 'color')
         // OR if the constant name itself is fully qualified (e.g. constName === 'color.red' and has no explicit namespace property)
         if (
@@ -517,14 +538,14 @@ export class PineCompletionService {
         }
       }
       // Check methods (static-like methods on built-in namespaces, e.g., math.abs)
-      const methodsMap = this.docsManager.getMap('methods', 'methods2')
-      for (const [methodFullName, methodDoc] of methodsMap.entries()) {
+      const builtInFunctionsMap = this.docsManager.getMap('functions');
+      for (const [methodFullName, methodDoc] of builtInFunctionsMap.entries()) {
         if (
+          (methodDoc.isMethod || methodDoc.thisType) && // It's a method
           typeof methodFullName === 'string' &&
-          methodDoc.isMethod && // Ensure it's a method
           methodFullName.startsWith(namespaceForBuiltins + '.') // e.g., "math.abs" starts with "math."
         ) {
-          const methodRelativeName = methodFullName.substring(namespaceForBuiltins.length + 1)
+          const methodRelativeName = methodFullName.substring(namespaceForBuiltins.length + 1);
           if (methodRelativeName.toLowerCase().startsWith(partialNameForBuiltins.toLowerCase())) {
             completions.push({
               name: methodRelativeName + '()', // Add () for methods
@@ -647,12 +668,16 @@ export class PineCompletionService {
 
     const searchName = name.replace(/\(\)$/, ''); // Remove () if present
 
-    // 1. Check `functions`, `functions2`, `completionFunctions` maps first.
-    //    These maps might contain explicitly defined functions by a linter,
-    //    including UDT constructors formatted as regular functions (e.g., "MyType.new").
-    let funcDoc = this.docsManager.getMap('functions', 'functions2', 'completionFunctions').get(searchName);
+    // 1. Check `functions` map first.
+    //    This map now contains all functions, methods, and constructors from both built-ins and lint.
+    const allFunctionsMap = this.docsManager.getMap('functions');
+    let funcDoc = allFunctionsMap.get(searchName);
+
     if (funcDoc) {
+      // Ensure args is an array, default to empty if not present
       funcDoc.args = Array.isArray(funcDoc.args) ? funcDoc.args : [];
+
+      // Kind should ideally be set correctly during ingestion by PineDocsManager
       if (!funcDoc.kind) { // Set kind if not already defined by linter
         if (searchName.endsWith('.new')) {
           funcDoc.kind = 'Constructor';
@@ -667,14 +692,14 @@ export class PineCompletionService {
       return funcDoc;
     }
 
-    // 2. If not found as a regular function AND it's a ".new" syntax,
-    //    attempt to synthesize its signature from a UDT definition.
-    if (searchName.endsWith('.new')) {
+    // 2. If not found as an explicit function (e.g. MyType.new was not in lint functions)
+    //    AND it's a ".new" syntax, attempt to synthesize its signature from a UDT definition.
+    if (!funcDoc && searchName.endsWith('.new')) {
       const udtName = searchName.slice(0, -'.new'.length);
-      // UDTs are typically in 'UDT' map, but 'types' can also be a source.
-      const udtDoc = this.docsManager.getMap('UDT', 'types').get(udtName);
+      const typesMap = this.docsManager.getMap('types'); // UDTs are in 'types'
+      const udtDoc = typesMap.get(udtName);
 
-      if (udtDoc && Array.isArray(udtDoc.fields)) { // Ensure udtDoc exists and has fields
+      if (udtDoc && Array.isArray(udtDoc.fields)) {
         const constructorArgs = udtDoc.fields.map((field: any) => {
           // A field is considered required if it does not have a default value.
           const isRequired = field.default === undefined || field.default === null;
@@ -720,21 +745,12 @@ export class PineCompletionService {
       // If udtDoc or udtDoc.fields is not found, this path won't return, allowing fallback to method maps.
     }
 
-    // 3. Check `methods`, `methods2` maps if not found yet.
-    //    This primarily catches actual methods but could also include ".new" if defined as a method.
-    funcDoc = this.docsManager.getMap('methods', 'methods2').get(searchName);
-    if (funcDoc) {
-      funcDoc.args = Array.isArray(funcDoc.args) ? funcDoc.args : [];
-      if (!funcDoc.kind) { // Set kind if not already defined
-        if (searchName.endsWith('.new')) {
-          funcDoc.kind = 'Constructor';
-        } else {
-          funcDoc.kind = 'Method';
-        }
-      }
-      return funcDoc;
+    // No need to check 'methods' map separately as they are included in 'functions' map with proper kind.
+    // } else if (funcDoc) { // If found in the first check from functionsMap
+    //   return funcDoc; // Already processed
     }
 
-    return undefined; // Not found in any map or synthesis path
+
+    return funcDoc || undefined; // Return funcDoc if found in functionsMap or synthesized, else undefined.
   }
 }

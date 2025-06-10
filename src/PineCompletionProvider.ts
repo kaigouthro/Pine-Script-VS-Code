@@ -144,7 +144,8 @@ export class PineCompletionProvider implements vscode.CompletionItemProvider {
       if (doc.args && doc.args.length > 0) {
         extraDocs += `\n\n**Parameters:**\n`
         doc.args.forEach((arg: any) => {
-          extraDocs += `- \`${arg.name}\`: ${arg.displayType || arg.type} ${arg.desc ? `- ${arg.desc}` : ''}\n`
+          // Assuming arg.type is now the standardized displayable type
+          extraDocs += `- \`${arg.name}\`: ${arg.type} ${arg.desc ? `- ${arg.desc}` : ''}\n`
         })
       }
       if (doc.fields && doc.fields.length > 0) { // For UDTs/Enums

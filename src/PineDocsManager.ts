@@ -11,185 +11,284 @@ export class PineDocsManager {
   /** index signature */
   [key: string]: any
 
-  docAliases: string[] = [
+  languageModel: {
+    variables: Map<string, any>;
+    functions: Map<string, any>; // Stores all functions, methods, constructors
+    types: Map<string, any>;     // For UDTs
+    enums: Map<string, any>;
+    constants: Map<string, any>; // Built-in constants
+    imports: Map<string, any>;   // Script imports
+    annotations: Map<string, any>; // Script annotations e.g. @version
+    controls: Map<string, any>; // Control flow keywords e.g. if, for
+    // Add other categories as needed e.g. 'namespaces' for built-in objects like 'math'
+  };
+
+  docAliases: string[] = [ // These might be namespaces or types with static-like methods/constants
     'box',
     'table',
     'line',
     'label',
     'linefill',
-    'array',
-    'map',
-    'matrix',
+    'array', // array has methods but is also a type
+    'map',   // map has methods but is also a type
+    'matrix',// matrix has methods but is also a type
     'polyline',
     'chart.point',
-  ]
+  ];
 
-  importAliases: string[] = []
-  aliases: string[] = []
-  Docs: Record<string, any>
-  importsDocs: Record<string, any>[]
-  typesDocs: Record<string, any>[]
-  methodsDocs: Record<string, any>[]
-  methods2Docs: Record<string, any>[]
-  UDTDocs: Record<string, any>[]
-  fieldsDocs: Record<string, any>[]
-  fields2Docs: Record<string, any>[]
-  controlsDocs: Record<string, any>[]
-  variablesDocs: Record<string, any>[]
-  variables2Docs: Record<string, any>[]
-  constantsDocs: Record<string, any>[]
-  functionsDocs: Record<string, any>[]
-  functions2Docs: Record<string, any>[]
-  completionFunctionsDocs: Record<string, any>[]
-  enumsDocs: Record<string, any>[] = [] // Added for enums
-  annotationsDocs: Record<string, any>[]
-  cleaned = false
+  importAliases: string[] = []; // Aliases from import statements, e.g. import Lib as MyLib; MyLib is an alias
+  // 'aliases' property seems redundant if importAliases covers this. To be reviewed.
+  // aliases: string[] = [];
+
+  // Old array properties are removed.
+  // Docs: Record<string, any> // Superseded by direct loading into languageModel or specific old arrays if needed for a transition
+  // importsDocs: Record<string, any>[] // Will be part of languageModel.imports (Map)
+  // typesDocs: Record<string, any>[] // Built-in types, will go to languageModel.types or a dedicated 'builtInTypes' map
+  // methodsDocs: Record<string, any>[] // Built-in methods, will go to languageModel.functions with appropriate kind/thisType
+  // methods2Docs: Record<string, any>[] // Script methods, will go to languageModel.functions
+  // UDTDocs: Record<string, any>[] // Script UDTs, will go to languageModel.types
+  // fieldsDocs: Record<string, any>[] // Built-in fields, part of their respective UDT/type in languageModel
+  // fields2Docs: Record<string, any>[] // Not needed, fields are part of UDTs
+  // controlsDocs: Record<string, any>[] // Built-in controls, will go to languageModel.controls Map
+  // variablesDocs: Record<string, any>[] // Built-in variables, will go to languageModel.variables
+  // variables2Docs: Record<string, any>[] // Script variables, will go to languageModel.variables
+  // constantsDocs: Record<string, any>[] // Built-in constants, will go to languageModel.constants
+  // functionsDocs: Record<string, any>[] // Built-in functions, will go to languageModel.functions
+  // functions2Docs: Record<string, any>[] // Script functions, will go to languageModel.functions
+  // completionFunctionsDocs: Record<string, any>[] // Covered by languageModel.functions
+  // enumsDocs: Record<string, any>[] = [] // Script enums, will go to languageModel.enums
+  // annotationsDocs: Record<string, any>[] // Script annotations, will go to languageModel.annotations Map
+  // cleaned = false; // This was related to clearing old arrays, review its necessity
 
   /**
    * Constructor for PineDocsManager class. It initializes class properties and loads
    * documentation from 'pineDocs.json' into the Docs property.
    */
   constructor() {
-    // Reading the pineDocs.json file to initialize the documentation object.
-    this.Docs = JSON.parse(
+    this.languageModel = {
+      variables: new Map<string, any>(),
+      functions: new Map<string, any>(),
+      types: new Map<string, any>(),
+      enums: new Map<string, any>(),
+      constants: new Map<string, any>(),
+      imports: new Map<string, any>(), // Using Map for imports for quick lookup by alias/path
+      annotations: new Map<string, any>(),
+      controls: new Map<string, any>(),
+    };
+
+    // The direct parsing of this.Docs and population of old arrays is removed.
+    // Loading and processing of pineDocs.json will be handled in the next step,
+    // populating the new this.languageModel structure.
+    // For now, we can read the file, but won't process it in the old way.
+    const rawPineDocs = JSON.parse(
       fs.readFileSync(path.join(__dirname, '..', 'Pine_Script_Documentation', 'pineDocs.json'), 'utf-8'),
-    )
-    this.UDTDocs = []
-    this.importsDocs = []
-    this.fields2Docs = []
-    this.methods2Docs = []
-    this.variables2Docs = []
-    this.functions2Docs = []
-    this.completionFunctionsDocs = []
-    this.enumsDocs = [] // Initialize enumsDocs
-    this.typesDocs = this.Docs.types[0].docs
-    this.fieldsDocs = this.Docs.fields[0].docs
-    this.methodsDocs = this.Docs.methods[0].docs
-    this.controlsDocs = this.Docs.controls[0].docs
-    this.variablesDocs = this.Docs.variables[0].docs
-    this.constantsDocs = this.Docs.constants[0].docs
-    this.functionsDocs = this.Docs.functions[0].docs
-    this.annotationsDocs = this.Docs.annotations[0].docs
+    );
+    this.loadPineDocsJson(rawPineDocs);
+  }
+
+  private loadPineDocsJson(rawPineDocs: any): void {
+    const categories: (keyof typeof this.languageModel)[] = [
+      'variables',
+      'functions',
+      'types',
+      'enums',
+      'constants',
+      'controls',
+      'annotations'
+    ];
+
+    for (const category of categories) {
+      const docsArray = rawPineDocs[category];
+      if (docsArray && Array.isArray(docsArray)) {
+        docsArray.forEach((doc: any) => {
+          if (doc.name) {
+            // Add an 'isBuiltIn' flag to distinguish from lint-sourced items
+            doc.isBuiltIn = true;
+
+            // Minor transformations if needed to align with lint structure.
+            // For example, if pineDocs.json uses 'desc' but lint uses 'description' primarily for display.
+            // For now, assume direct mapping or that downstream consumers (like PineCompletionService)
+            // can handle slight variations or that pineDocs.json will be fully aligned.
+            if (doc.desc && !doc.description) {
+                doc.description = doc.desc;
+            }
+
+            // Ensure 'kind' is present, defaulting based on category if missing
+            if (!doc.kind) {
+                switch (category) {
+                    case 'variables': doc.kind = 'Variable'; break;
+                    case 'functions': doc.kind = 'Function'; break; // Could be 'Method' if it has 'thisType'
+                    case 'types': doc.kind = 'Type'; break; // Or 'UDT' if it represents a UDT-like built-in
+                    case 'enums': doc.kind = 'Enum'; break;
+                    case 'constants': doc.kind = 'Constant'; break;
+                    case 'controls': doc.kind = 'Control'; break;
+                    case 'annotations': doc.kind = 'Annotation'; break;
+                }
+            }
+            // If functions from pineDocs.json can be methods, check for 'thisType' or a similar field.
+            if (category === 'functions' && (doc.thisType || doc.name.includes('.'))) { // crude check for method
+                doc.isMethod = true;
+                if (!doc.kind || doc.kind === 'Function') { // Correct kind if it was defaulted to Function
+                    doc.kind = 'Method';
+                }
+            }
+
+            this.languageModel[category].set(doc.name, doc);
+          } else {
+            console.warn(`PineDocsManager: Document object in category '${category}' from pineDocs.json is missing a 'name'. Skipping.`);
+          }
+        });
+      } else {
+        console.warn(`PineDocsManager: Category '${category}' not found or not an array in pineDocs.json.`);
+      }
+    }
+
+    // Handle 'namespaces' or other specific structures from pineDocs.json if they exist
+    // and need to be mapped to languageModel or other properties.
+    // For example, if pineDocs.json has a top-level "namespaces" array for things like "math", "color", etc.
+    // these might also be treated as 'types' with static members, or 'variables' of a special kind.
+    // The current structure assumes they are within 'functions', 'variables', 'constants' with appropriate namespacing in their 'name' field (e.g., "math.abs").
   }
 
   /**
    * Retrieves the types documentation.
    * @returns The types documentation.
    */
-  getTypes(): Record<string, any>[] {
-    return this.typesDocs
+  getTypes(): Record<string, any>[] { // To be refactored or removed
+    // return this.typesDocs
+    return Array.from(this.languageModel.types.values()).filter(doc => !doc.isUDT && !doc.isEnum); // Example: if types map stores more than just built-in primitive types
   }
 
   /**
    * Retrieves the imports documentation.
    * @returns The imports documentation.
    */
-  getImports(): Record<string, any>[] {
-    return this.importsDocs
+  getImports(): Record<string, any>[] { // To be refactored or removed
+    // return this.importsDocs
+    return Array.from(this.languageModel.imports.values());
   }
 
   /**
    * Retrieves the methods documentation.
    * @returns The methods documentation.
    */
-  getMethods(): Record<string, any>[] {
-    return this.methodsDocs
+  getMethods(): Record<string, any>[] { // To be refactored or removed
+    // return this.methodsDocs
+    return Array.from(this.languageModel.functions.values()).filter(fn => fn.isMethod && fn.isBuiltIn); // Example criteria
   }
 
   /**
    * Retrieves the second set of methods documentation.
    * @returns The second set of methods documentation.
    */
-  getMethods2(): Record<string, any>[] {
-    return this.methods2Docs
+  getMethods2(): Record<string, any>[] { // To be refactored or removed
+    // return this.methods2Docs
+    return Array.from(this.languageModel.functions.values()).filter(fn => fn.isMethod && !fn.isBuiltIn); // Example criteria
   }
 
   /**
    * Retrieves the controls documentation.
    * @returns The controls documentation.
    */
-  getControls(): Record<string, any>[] {
-    return this.controlsDocs
+  getControls(): Record<string, any>[] { // To be refactored or removed
+    // return this.controlsDocs
+    return Array.from(this.languageModel.controls.values());
   }
 
   /**
    * Retrieves the variables documentation.
    * @returns The variables documentation.
    */
-  getVariables(): Record<string, any>[] {
-    return this.variablesDocs
+  getVariables(): Record<string, any>[] { // To be refactored or removed
+    // return this.variablesDocs
+    return Array.from(this.languageModel.variables.values()).filter(v => v.isBuiltIn); // Example criteria
   }
 
   /**
    * Retrieves the second set of variables documentation.
    * @returns The second set of variables documentation.
    */
-  getVariables2(): Record<string, any>[] {
-    return this.variables2Docs
+  getVariables2(): Record<string, any>[] { // To be refactored or removed
+    // return this.variables2Docs
+    return Array.from(this.languageModel.variables.values()).filter(v => !v.isBuiltIn); // Example criteria
   }
 
   /**
    * Retrieves the constants documentation.
    * @returns The constants documentation.
    */
-  getConstants(): Record<string, any>[] {
-    return this.constantsDocs
+  getConstants(): Record<string, any>[] { // To be refactored or removed
+    // return this.constantsDocs
+    return Array.from(this.languageModel.constants.values());
   }
 
   /**
    * Retrieves the functions documentation.
    * @returns The functions documentation.
    */
-  getFunctions(): Record<string, any>[] {
-    return this.functionsDocs
+  getFunctions(): Record<string, any>[] { // To be refactored or removed
+    // return this.functionsDocs
+    return Array.from(this.languageModel.functions.values()).filter(fn => !fn.isMethod && fn.isBuiltIn); // Example criteria
   }
 
   /**
    * Retrieves the second set of functions documentation.
    * @returns The second set of functions documentation.
    */
-  getFunctions2(): Record<string, any>[] {
-    return this.functions2Docs
+  getFunctions2(): Record<string, any>[] { // To be refactored or removed
+    // return this.functions2Docs
+    return Array.from(this.languageModel.functions.values()).filter(fn => !fn.isMethod && !fn.isBuiltIn); // Example criteria
   }
 
   /**
    * Retrieves the completion functions documentation.
    * @returns The completion functions documentation.
    */
-  getCompletionFunctions(): Record<string, any>[] {
-    return this.completionFunctionsDocs
+  getCompletionFunctions(): Record<string, any>[] { // To be refactored or removed
+    // return this.completionFunctionsDocs
+    return Array.from(this.languageModel.functions.values()); // Or a specific subset
   }
 
   /**
    * Retrieves the annotations documentation.
    * @returns The annotations documentation.
    */
-  getAnnotations(): Record<string, any>[] {
-    return this.annotationsDocs
+  getAnnotations(): Record<string, any>[] { // To be refactored or removed
+    // return this.annotationsDocs
+    return Array.from(this.languageModel.annotations.values());
   }
 
   /**
    * Retrieves the UDT (User-Defined Types) documentation.
    * @returns The UDT documentation.
    */
-  getUDT(): Record<string, any>[] {
-    return this.UDTDocs
+  getUDT(): Record<string, any>[] { // To be refactored to use languageModel.types
+    // return this.UDTDocs
+    return Array.from(this.languageModel.types.values()).filter(t => t.kind === 'User Type' || t.kind === 'UDT'); // Example
   }
 
   /**
    * Retrieves the fields documentation.
    * @returns The fields documentation.
    */
-  getFields(): Record<string, any>[] {
-    return this.fieldsDocs
+  getFields(): Record<string, any>[] { // To be refactored or removed; fields are part of types/UDTs
+    // return this.fieldsDocs
+    const allFields: any[] = [];
+    this.languageModel.types.forEach(typeDef => {
+      if (typeDef.fields) {
+        allFields.push(...typeDef.fields.map((f: any) => ({...f, parentType: typeDef.name})));
+      }
+    });
+    return allFields;
   }
 
   /**
    * Retrieves the second set of fields documentation.
    * @returns The second set of fields documentation.
    */
-  getFields2(): Record<string, any>[] {
-    return this.fields2Docs
+  getFields2(): Record<string, any>[] { // To be refactored or removed
+    // return this.fields2Docs
+    return []; // Likely obsolete as fields are part of UDTs in languageModel.types
   }
 
   /**
@@ -197,419 +296,211 @@ export class PineDocsManager {
    * @param key - The key to switch on.
    * @returns The typedocs for the getSwitch function.
    */
-  getSwitch(key: string): Record<string, any>[] {
-    switch (key) {
-      case 'types':
-        return this.getTypes()
-      case 'imports':
-        return this.getImports()
-      case 'methods':
-        return this.getMethods()
-      case 'methods2':
-        return this.getMethods2()
-      case 'controls':
-        return this.getControls()
-      case 'variables':
-        return this.getVariables()
-      case 'variables2':
-        return this.getVariables2()
-      case 'constants':
-        return this.getConstants()
-      case 'functions':
-        return this.getFunctions()
-      case 'functions2':
-        return this.getFunctions2()
-      case 'completionFunctions':
-        return this.getCompletionFunctions()
-      case 'annotations':
-        return this.getAnnotations()
-      case 'UDT':
-        return this.getUDT()
-      case 'fields':
-        return this.getFields()
-      case 'fields2':
-        return this.getFields2()
-      case 'enums': // Added for enums
-        return this.enumsDocs
-      default:
-        return []
-    }
-  }
+  // getSwitch(key: string): Record<string, any>[] { // Superseded by direct languageModel access or refined getMap/getDocs
+    // switch (key) {
+    //   case 'types':
+    //     return this.getTypes()
+    //   case 'imports':
+    //     return this.getImports()
+    //   case 'methods':
+    //     return this.getMethods()
+    //   case 'methods2':
+    //     return this.getMethods2()
+    //   case 'controls':
+    //     return this.getControls()
+    //   case 'variables':
+    //     return this.getVariables()
+    //   case 'variables2':
+    //     return this.getVariables2()
+    //   case 'constants':
+    //     return this.getConstants()
+    //   case 'functions':
+    //     return this.getFunctions()
+    //   case 'functions2':
+    //     return this.getFunctions2()
+    //   case 'completionFunctions':
+    //     return this.getCompletionFunctions()
+    //   case 'annotations':
+    //     return this.getAnnotations()
+    //   case 'UDT':
+    //     return this.getUDT()
+    //   case 'fields':
+    //     return this.getFields()
+    //   case 'fields2':
+    //     return this.getFields2()
+    //   case 'enums':
+    //     return Array.from(this.languageModel.enums.values());
+    //   default:
+    //     if (this.languageModel[key] instanceof Map) {
+    //       return Array.from(this.languageModel[key].values());
+    //     }
+    //     return []
+    // }
+  // }
+
+  // setSwitch(key: string, docs: any) { // Superseded by direct languageModel manipulation in constructor/ingestLintResponse
+    // switch (key) {
+    //   case 'types':
+    //     // this.typesDocs = docs // Old way
+    //     break;
+    //   // ... other cases for old array properties would be removed or adapted ...
+    //   case 'enums':
+    //     if (Array.isArray(docs)) {
+    //       docs.forEach(doc => this.languageModel.enums.set(doc.name, doc));
+    //     } else {
+    //       this.languageModel.enums = docs;
+    //     }
+    //     break
+    //   default:
+    //     if (this.languageModel[key] instanceof Map) {
+    //       const map = this.languageModel[key] as Map<string, any>;
+    //       map.clear();
+    //       if (Array.isArray(docs)) {
+    //          docs.forEach(doc => map.set(doc.name, doc));
+    //       } else {
+    //         console.warn(`setSwitch: Default case for ${key} received non-array docs. Data not set.`);
+    //       }
+    //     } else {
+    //       console.warn(`setSwitch: Key ${key} not found in languageModel or not a Map.`);
+    //     }
+    //     break;
+    // }
+  // }
 
   /**
-   * Sets the typedocs for the setSwitch function.
-   * @param key - The key to switch on.
-   * @param docs - The docs to set.
-   * @returns The typedocs for the setSwitch function.
-   */
-  setSwitch(key: string, docs: any) {
-    switch (key) {
-      case 'types':
-        this.typesDocs = docs
-        break
-      case 'imports':
-        this.importsDocs = docs
-        break
-      case 'methods':
-        this.methodsDocs = docs
-        break
-      case 'methods2':
-        this.methods2Docs = docs
-        break
-      case 'controls':
-        this.controlsDocs = docs
-        break
-      case 'variables':
-        this.variablesDocs = docs
-        break
-      case 'variables2':
-        this.variables2Docs = docs
-        break
-      case 'constants':
-        this.constantsDocs = docs
-        break
-      case 'functions':
-        this.functionsDocs = docs
-        break
-      case 'functions2':
-        this.functions2Docs = docs
-        break
-      case 'completionFunctions':
-        this.completionFunctionsDocs = docs
-        break
-      case 'annotations':
-        this.annotationsDocs = docs
-        break
-      case 'UDT':
-        this.UDTDocs = docs
-        break
-      case 'fields':
-        this.fieldsDocs = docs
-        break
-      case 'fields2':
-        this.fields2Docs = docs
-        break
-      case 'enums': // Added for enums
-        this.enumsDocs = docs
-        break
-    }
-  }
-
-  /**
-   * Returns a Map where the key is the 'name' property from the docs and the value is the doc object
-   * @param keys - The keys to get the map for.
-   * @returns The map.
+   * Returns a Map of documents for the given categories.
+   * If multiple keys are provided, their corresponding Maps from languageModel are merged.
+   * @param keys - One or more category keys (e.g., 'functions', 'variables').
+   * @returns A new Map containing all documents from the requested categories.
    */
   getMap(...keys: string[]): Map<string, any> {
-    // Changed value type to any
-    try {
-      const docs = this.getDocs(...keys)
-      const outMap: Map<string, any> = this.makeMap(docs) // Changed value type to any
-      return outMap ?? new Map() // Return new Map() in case of null or undefined
-    } catch (error) {
-      console.error(error)
-      return new Map()
+    const combinedMap = new Map<string, any>();
+    if (keys.length === 0) {
+      console.warn('getMap called with no keys.');
+      return combinedMap;
     }
-  }
 
-  /**
-   * the makeMap function is used to make a map for a given key
-   * @param docs - The docs to make the map for.
-   * @returns The map.
-   */
-  makeMap(docs: any[]): Map<string, any> {
-    // Changed value type to any
-    try {
-      const entries: [string, any][] = docs.flatMap((doc: any) => {
-        // Changed value type to any
-        if (doc?.name) {
-          return [[doc.name, doc] as [string, any]] // Changed value type to any
-        } else {
-          return []
-        }
-      })
-      const outMap: Map<string, any> = new Map(entries) // Changed value type to any
-      return outMap
-    } catch (error) {
-      console.error(error)
-      return new Map()
-    }
-  }
-
-  /**
-   * the getDocs function is used to get the docs for a given key
-   * @param keys - The keys to get the docs for.
-   * @returns The docs.
-   */
-  getDocs(...keys: string[]) {
-    try {
-      let result: any = []
-      for (let key of keys) {
-        const docsForKey = this.getSwitch(key)
-        if (Array.isArray(docsForKey)) {
-          if (/unctions/.test(key)) {
-            docsForKey.filter((doc: any) => !doc?.isMethod)
-          } else if (/methods/.test(key)) {
-            docsForKey.filter((doc: any) => doc?.isMethod)
-          }
-
-          result = [...result, ...docsForKey]
-        } else {
-          // Handle the case where docsForKey is not an array
-          console.error(`Expected an array for key ${key}, but got:`, docsForKey)
-          // Depending on your needs, you might throw an error, continue, or apply a default value
-        }
+    for (const key of keys) {
+      const modelCategory = key as keyof typeof this.languageModel; // Type assertion
+      const sourceMap = this.languageModel[modelCategory];
+      if (sourceMap instanceof Map) {
+        sourceMap.forEach((value, name) => {
+          combinedMap.set(name, value); // Later keys will overwrite earlier ones if names collide
+        });
+      } else {
+        console.warn(`getMap: Category '${key}' not found in languageModel or is not a Map.`);
       }
-      return [...new Set(result)]
-    } catch (error) {
-      console.error(error)
-      return []
     }
+    return combinedMap;
   }
 
-  /**
-   * the setImportDocs function is used to set the imports key of the response object
-   * @param docs - The docs to set.
-   * @returns The key.
-   */
-  setImportDocs(docs: any) {
-    this.importsDocs = docs
-  }
+  // makeMap(docs: any[]): Map<string, any> { // Likely obsolete if getMap returns Maps directly
+    // try {
+    //   const entries: [string, any][] = docs.flatMap((doc: any) => {
+    //     if (doc?.name) {
+    //       return [[doc.name, doc] as [string, any]]
+    //     } else {
+    //       return []
+    //     }
+    //   })
+    //   const outMap: Map<string, any> = new Map(entries)
+    //   return outMap
+    // } catch (error) {
+    //   console.error(error)
+    //   return new Map()
+    // }
+  // }
 
   /**
-   * the setParsed function is used to set the parsed docs for a given key
-   * @param docs - The docs to set.
-   * @param keyType - The key type to set the docs for.
+   * Retrieves an array of documents for the given categories, with optional filtering.
+   * @param keys - One or more category keys (e.g., 'functions', 'variables').
+   * @returns An array of documents.
    */
-  setParsed(docs: any[], keyType: string) {
+  getDocs(...keys: string[]): Record<string, any>[] {
+    let result: any[] = [];
+    for (const key of keys) {
+      const modelCategory = key as keyof typeof this.languageModel; // Type assertion
+      const sourceMap = this.languageModel[modelCategory];
+      if (sourceMap instanceof Map) {
+        let docsForKey = Array.from(sourceMap.values());
+        // The old isMethod filtering logic might still be relevant depending on how
+        // 'functions' vs 'methods' are queried by consumers.
+        // For now, this specific filtering is removed from here; consumers can filter.
+        // if (/functions/.test(key) && !/completionFunctions/.test(key) && !/methods/.test(key)) { // Be more specific
+        //   docsForKey = docsForKey.filter((doc: any) => !doc?.isMethod);
+        // } else if (/methods/.test(key)) {
+        //   docsForKey = docsForKey.filter((doc: any) => doc?.isMethod);
+        // }
+        result = [...result, ...docsForKey];
+      } else {
+        console.warn(`getDocs: Category '${key}' not found in languageModel or is not a Map.`);
+      }
+    }
+    // Return unique documents by reference (if objects are identical) or by name
+    // Using Map to get unique by name, then converting to array
+    const uniqueDocsMap = new Map<string, any>();
+    result.forEach(doc => {
+      if (doc && doc.name && !uniqueDocsMap.has(doc.name)) { // Prioritize first encountered for a given name
+        uniqueDocsMap.set(doc.name, doc);
+      } else if (doc && doc.name && uniqueDocsMap.has(doc.name)) {
+        // Potentially merge or decide on override strategy if needed
+        // For now, first one wins.
+      }
+    });
+    return Array.from(uniqueDocsMap.values());
+  }
+
+  // setImportDocs(docs: any) { // Superseded by ingestLintResponse populating languageModel.imports
+  //   // this.importsDocs = docs
+  // }
+
+  setParsed(docs: any[], keyType: string) { // Largely superseded by ingestLintResponse
+    // This method was used by the old PineParser.ts.
+    // With data coming from ingestLintResponse into languageModel,
+    // this method's direct manipulation of old arrays or even specific
+    // languageModel maps via setSwitch might be redundant or lead to conflicts.
+    // For now, commenting out its body to prevent unintended operations.
+    // If any part of this logic is still needed for supplementary data, it should be carefully reviewed.
+    /*
     try {
       if (keyType === 'args' || keyType === 'fields') {
-        const keysToUpdate = keyType === 'args' ? ['functions2', 'methods2', 'completionFunctions'] : ['UDT']
-
-        for (const k of keysToUpdate) {
-          const currentMap = this.getMap(k)
-
-          for (const doc of docs) {
-            const { name } = doc
-            let currentDocEntry = currentMap.get(name)
-
-            if (currentDocEntry) {
-              // Update existing entry
-              currentDocEntry.kind = doc.kind || currentDocEntry.kind
-              currentDocEntry.body = doc.body || currentDocEntry.body
-              currentDocEntry.doc = doc.doc || currentDocEntry.doc
-
-              if (doc.export !== undefined) {
-                currentDocEntry.export = doc.export
-              }
-              if (doc.method !== undefined) {
-                currentDocEntry.method = doc.method
-              }
-              if (doc.libId !== undefined) {
-                currentDocEntry.libId = doc.libId
-              }
-
-              // Merge arguments or fields
-              const membersKey = keyType // 'args' or 'fields'
-              if (doc[membersKey] && doc[membersKey].length > 0) {
-                if (!Array.isArray(currentDocEntry[membersKey])) {
-                  currentDocEntry[membersKey] = []
-                }
-                for (let parsedMember of doc[membersKey]) {
-                  const memberName = parsedMember.name
-                  let currentMember = currentDocEntry[membersKey].find((m: any) => m.name === memberName)
-
-                  if (currentMember) {
-                    currentMember.type = parsedMember.type || currentMember.type
-                    currentMember.kind = parsedMember.kind || currentMember.kind
-                    if (parsedMember.default !== undefined) {
-                      currentMember.default = parsedMember.default
-                    }
-                    if (parsedMember.isConst !== undefined) {
-                      currentMember.isConst = parsedMember.isConst
-                    }
-                    if (parsedMember.desc !== undefined) {
-                        currentMember.desc = parsedMember.desc
-                    }
-                    if (keyType === 'args') {
-                      currentMember.required = parsedMember.required !== undefined ? parsedMember.required : currentMember.required
-                      if (parsedMember.modifier) {
-                        currentMember.modifier = parsedMember.modifier
-                      }
-                    }
-                  } else {
-                    currentDocEntry[membersKey].push(parsedMember)
-                  }
-                }
-              }
-              currentMap.set(name, currentDocEntry)
-            } else {
-              // Add new entry if it doesn't exist
-              currentMap.set(name, doc)
-            }
-          }
-          this.setDocs([{ docs: Array.from(currentMap.values()) }], k)
-        }
+        // ... old logic ...
       } else if (keyType === 'enum_members') {
-        const key = 'enums' // Target 'this.enumsDocs'
-        const currentEnumMap = this.getMap(key)
-
-        for (const enumDoc of docs) {
-          const { name, members } = enumDoc
-          let currentEnumEntry = currentEnumMap.get(name)
-
-          if (currentEnumEntry) {
-            // Update existing enum entry
-            currentEnumEntry.kind = enumDoc.kind || currentEnumEntry.kind
-            currentEnumEntry.doc = enumDoc.doc || currentEnumEntry.doc // Assuming enums might have docstrings
-            if (enumDoc.export !== undefined) {
-              currentEnumEntry.export = enumDoc.export
-            }
-            if (enumDoc.libId !== undefined) {
-                currentEnumEntry.libId = enumDoc.libId
-            }
-            currentEnumEntry.originalName = enumDoc.originalName || currentEnumEntry.originalName
-
-
-            // Merge members
-            if (members && members.length > 0) {
-              if (!Array.isArray(currentEnumEntry.members)) {
-                currentEnumEntry.members = []
-              }
-              const existingMembersMap = new Map(currentEnumEntry.members.map((m: any) => [m.name, m]))
-
-              for (const newMember of members) {
-                let existingMember = existingMembersMap.get(newMember.name)
-                if (existingMember) {
-                  // Update existing member
-                  existingMember.kind = newMember.kind || existingMember.kind
-                  if (newMember.value !== undefined) {
-                    existingMember.value = newMember.value
-                  }
-                  // Add other properties if enums members can have them (e.g., docstrings per member)
-                  // if (newMember.doc !== undefined) { existingMember.doc = newMember.doc; }
-                } else {
-                  // Add new member
-                  currentEnumEntry.members.push(newMember)
-                }
-              }
-            }
-            currentEnumMap.set(name, currentEnumEntry)
-          } else {
-            // Add new enum entry if it doesn't exist
-            currentEnumMap.set(name, enumDoc)
-          }
-        }
-        // Save the updated enum map
-        this.setDocs([{ docs: Array.from(currentEnumMap.values()) }], key)
+        // ... old logic ...
       } else if (keyType === 'variables') {
-        const key = 'variables2' // Target 'this.variables2Docs'
-        const currentMap = this.getMap(key) // Get existing script variables
-
-        for (const variableDoc of docs) {
-          const { name } = variableDoc
-          let currentDocEntry = currentMap.get(name)
-
-          if (currentDocEntry) {
-            // Update existing variable entry
-            currentDocEntry.kind = variableDoc.kind || currentDocEntry.kind
-            currentDocEntry.type = variableDoc.type || currentDocEntry.type
-            currentDocEntry.doc = variableDoc.doc || currentDocEntry.doc // If variables can have docstrings
-            if (variableDoc.libId !== undefined) {
-              currentDocEntry.libId = variableDoc.libId
-            }
-            if (variableDoc.originalName !== undefined) {
-              currentDocEntry.originalName = variableDoc.originalName
-            }
-            // Add any other properties that might be relevant for variables
-            currentMap.set(name, currentDocEntry)
-          } else {
-            // Add new variable entry if it doesn't exist
-            currentMap.set(name, variableDoc)
-          }
-        }
-        // Save the updated variables map
-        this.setDocs([{ docs: Array.from(currentMap.values()) }], key)
+        // ... old logic ...
       }
     } catch (error) {
       console.error('Error in setParsed:', error)
     }
+    */
+    console.warn(`setParsed called with keyType '${keyType}'. This method is likely obsolete and data should be ingested via ingestLintResponse or constructor.`);
   }
 
-  /**
-   * the setDocs function is used to set the docs for a given key
-   * @param newDocs - The new docs to set.
-   * @param key - The key to set the docs for.
-   * @returns The key.
-   */
-  setDocs(newDocs: any, key: string) {
-    try {
-      const currentDocs: any[] = this.getSwitch(key)
-      const mergedDocs = this.mergeDocs(currentDocs, newDocs)
-      this.setSwitch(key, mergedDocs)
-    } catch (error) {
-      console.error(error)
-    }
-  }
+  // setDocs(newDocs: any, key: string) { // Superseded by direct languageModel manipulation
+    // try {
+    //   const currentDocs: any[] = this.getSwitch(key) // Relies on getSwitch
+    //   const mergedDocs = this.mergeDocs(currentDocs, newDocs)
+    //   this.setSwitch(key, mergedDocs) // Relies on setSwitch
+    // } catch (error) {
+    //   console.error(error)
+    // }
+  // }
 
-  /**
-   * Helper function to merge new docs into current docs
-   * @param currentDocs - The current docs.
-   * @param newDocs - The new docs.
-   * @returns The merged docs.
-   */
-  // Helper function to merge new docs into current docs
-  mergeDocs(currentDocs: any[], newDocs: any[]): any[] {
-    try {
-      if (!newDocs || newDocs.length === 0) {
-        // No new docs to merge, return the original list
-        return currentDocs
-      }
-
-      const docMap = new Map<string, any>()
-
-      // 1. Add all current docs to a map, keyed by name.
-      for (const doc of currentDocs) {
-        if (doc?.name) {
-          docMap.set(doc.name, doc)
-        }
-      }
-
-      // 2. Iterate through the new docs.
-      //    Update existing entries in the map or add new ones.
-      for (const docContainer of newDocs) {
-        // docContainer is expected to be like { docs: [...] }
-        if (Array.isArray(docContainer.docs)) {
-          for (const newDoc of docContainer.docs) {
-            if (newDoc?.name) {
-              const oldDoc = docMap.get(newDoc.name)
-              if (oldDoc) {
-                // If doc exists, merge by overwriting old properties with new ones
-                docMap.set(newDoc.name, { ...oldDoc, ...newDoc })
-              } else {
-                // If it's a completely new doc, add it
-                docMap.set(newDoc.name, newDoc)
-              }
-            }
-          }
-        } else {
-          console.warn(`Expected an array for doc.docs, but received: ${typeof docContainer.docs}`, 'mergeDocs')
-        }
-      }
-
-      // 3. Convert the map values back to an array.
-      return Array.from(docMap.values())
-    } catch (error) {
-      console.error(error)
-      return currentDocs // Return original docs on error
-    }
-  }
+  // mergeDocs(currentDocs: any[], newDocs: any[]): any[] { // Superseded
+    // try {
+    //   // ... old logic ...
+    // } catch (error) {
+    //   console.error(error)
+    //   return currentDocs
+    // }
+  // }
 
   /**
    * the setImportAliases function is used to set the imported namespace aliases
    * @param aliases - The aliases to set.
    */
-  set setImportAliases(aliases: string[]) {
+  set setImportAliases(aliases: string[]) { // This is still used by ingestLintResponse
     this.importAliases = aliases
   }
 
@@ -617,20 +508,29 @@ export class PineDocsManager {
    * the getAliases function is used to get the aliases for the current document
    * @returns The aliases.
    */
-  get getAliases() {
+  get getAliases() { // This is still used
     return [...this.docAliases, ...this.importAliases]
   }
 
   /**
-   * the cleanDocs function is used to clean the docs
-   * @returns The cleaned docs.
+   * Clears script-specific (non-built-in) data from the language model.
+   * Built-in data loaded from pineDocs.json remains.
    */
   cleanDocs() {
-    const docs = ['methods2', 'variables2', 'completionFunctions', 'functions2', 'UDT', 'fields2', 'enums'] // Added 'enums'
-    for (const doc of docs) {
-      this.setSwitch(doc, [])
+    for (const map of Object.values(this.languageModel)) {
+      if (map instanceof Map) {
+        const keysToDelete: string[] = [];
+        map.forEach((value, key) => {
+          if (value.isBuiltIn !== true) {
+            keysToDelete.push(key);
+          }
+        });
+        keysToDelete.forEach(key => map.delete(key));
+      }
     }
-  }
+    this.languageModel.imports.clear(); // Imports are always script-specific
+    this.importAliases = [];
+    console.log('PineDocsManager: Cleared script-specific (non-built-in) data from languageModel.');
 
   /**
    * Retrieves function documentation by name from 'completionFunctions' map.
@@ -693,30 +593,36 @@ export class PineDocsManager {
       return;
     }
 
-    // Clear out arrays that hold script-specific data
-    this.variables2Docs = [];
-    this.functions2Docs = [];
-    this.methods2Docs = [];
-    this.completionFunctionsDocs = []; // Will be repopulated from functions2Docs
-    this.UDTDocs = [];
-    this.enumsDocs = [];
-    this.importsDocs = [];
+    // Step 1: Clear previous script-specific (non-built-in) data from languageModel
+    for (const map of Object.values(this.languageModel)) {
+      if (map instanceof Map) {
+        const keysToDelete: string[] = [];
+        map.forEach((value, key) => {
+          if (value.isBuiltIn !== true) {
+            keysToDelete.push(key);
+          }
+        });
+        keysToDelete.forEach(key => map.delete(key));
+      }
+    }
+    this.languageModel.imports.clear(); // Imports are always script-specific
     this.importAliases = [];
-    // this.fields2Docs might not be needed if UDTs/Enums directly contain their fields/members
 
+    // Step 2: Process and merge lint data into this.languageModel
     // Process Imports
     for (const imp of lintResult.imports || []) {
       const importDoc = {
-        name: imp.alias || imp.lib, // Use alias as name if available, else lib name
+        name: imp.alias || imp.lib,
         alias: imp.alias,
-        libId: imp.id || imp.libId, // Check for 'id' or 'libId'
+        libId: imp.id || imp.libId,
         user: imp.user,
         libName: imp.lib,
         version: imp.version,
         kind: 'Import',
         description: `Imports library '${imp.lib}' version ${imp.version}${imp.alias ? ` as '${imp.alias}'` : ''}. User: ${imp.user}`,
+        isBuiltIn: false, // Mark as not built-in
       };
-      this.importsDocs.push(importDoc);
+      this.languageModel.imports.set(importDoc.name, importDoc);
       if (imp.alias) {
         this.importAliases.push(imp.alias);
       }
@@ -727,13 +633,13 @@ export class PineDocsManager {
       const variableDoc = {
         name: variable.name,
         type: variable.type || 'any',
-        kind: 'Variable', // Could be refined if lint provides more (e.g. const, input)
+        kind: 'Variable',
         libId: variable.libId,
         description: variable.metaInfo?.docs || variable.desc || '',
         originalName: variable.name,
-        // Consider adding 'default: variable.value' if lint provides initial values for globals
+        isBuiltIn: false,
       };
-      this.variables2Docs.push(variableDoc);
+      this.languageModel.variables.set(variableDoc.name, variableDoc);
     }
 
     // Process Functions
@@ -753,27 +659,23 @@ export class PineDocsManager {
       } else if (func.thisType || func.isMethod) {
         kind = 'Method';
       }
-      // TODO: Add UserExportFunction if func.export (or similar) is available
 
       const functionDoc: any = {
         name: func.name,
         args: args,
         kind: kind,
-        type: func.returnedTypes?.[0] || 'any', // Primary return type
-        returnedTypes: func.returnedTypes || ['any'], // Full list of return types
+        type: func.returnedTypes?.[0] || 'any',
+        returnedTypes: func.returnedTypes || ['any'],
         description: func.desc || func.metaInfo?.docs || '',
         libId: func.libId,
         thisType: func.thisType,
-        syntax: func.syntax?.[0] || func.name, // Fallback syntax to name
+        syntax: func.syntax?.[0] || func.name,
         originalName: func.name,
-        isMethod: kind === 'Method', // Explicitly set isMethod based on determined kind
+        isMethod: kind === 'Method',
+        isBuiltIn: false,
       };
-      this.functions2Docs.push(functionDoc);
+      this.languageModel.functions.set(functionDoc.name, functionDoc);
     }
-
-    // Post-process functions2Docs to populate methods2Docs and completionFunctionsDocs
-    this.methods2Docs = this.functions2Docs.filter(f => f.isMethod || !!f.thisType);
-    this.completionFunctionsDocs = [...this.functions2Docs]; // For now, all functions are completion functions
 
     // Process Types (UDTs)
     for (const type of lintResult.types || []) {
@@ -788,13 +690,14 @@ export class PineDocsManager {
 
       const udtDoc = {
         name: type.name,
-        kind: 'User Type', // Or "UDT" - ensure consistency with other parts of the system
+        kind: 'User Type',
         fields: fields,
         description: type.desc || type.metaInfo?.docs || '',
         libId: type.libId,
         originalName: type.name,
+        isBuiltIn: false,
       };
-      this.UDTDocs.push(udtDoc);
+      this.languageModel.types.set(udtDoc.name, udtDoc);
     }
 
     // Process Enums
@@ -804,26 +707,25 @@ export class PineDocsManager {
         value: this._parseEnumValue(member.title || member.name),
         kind: 'EnumMember',
         desc: member.desc || member.metaInfo?.docs || '',
-        type: enumDef.name, // Type of an enum member is the enum itself
+        type: enumDef.name,
       }));
 
       const enumDoc = {
         name: enumDef.name,
-        // kind: enumDef.export ? "UserExportEnum" : "UserEnum", // Assuming no export info from lint, default
         kind: "UserEnum",
         members: members,
         description: enumDef.desc || enumDef.metaInfo?.docs || '',
         libId: enumDef.libId,
         originalName: enumDef.name,
+        isBuiltIn: false,
       };
-      this.enumsDocs.push(enumDoc);
+      this.languageModel.enums.set(enumDoc.name, enumDoc);
     }
 
-    // After all data is ingested, internal maps used by getMap() will be rebuilt on next call.
-    // No need to call setDocs or mergeDocs if we are replacing the arrays directly.
-    // The `cleaned = false` flag might need to be set to true here if it implies that docs are loaded.
-    // However, the original `cleanDocs` method seems to be for clearing these arrays, which we've done.
-    // Let's assume `cleaned` is related to the initial load from `pineDocs.json`.
-    console.log('PineDocsManager: Ingested data from lint response.');
+    // Note: 'constants', 'controls', 'annotations' from languageModel are assumed to be primarily built-ins
+    // and are not cleared of built-in items. If lint can provide script-specific versions of these,
+    // their ingestion would follow a similar pattern (add with isBuiltIn: false).
+
+    console.log('PineDocsManager: Ingested data from lint response into languageModel.');
   }
 }
