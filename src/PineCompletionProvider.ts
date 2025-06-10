@@ -120,19 +120,50 @@ export class PineCompletionProvider implements vscode.CompletionItemProvider {
       label = isMethod ? `${namespace}.${label.split('.').pop()}` : label
       label = label + openParen + closeParen
 
-      // Use doc.description from CompletionDoc, fallback to doc.doc.desc if needed by checkDesc
-      const formattedDesc = Helpers.formatUrl(Helpers?.checkDesc(doc.description || doc.doc?.desc))
-      // Determine the kind of the completion item
-      // Pass doc.doc (original doc object) to determineCompletionItemKind for docDetails
-      const itemKind = await this.determineCompletionItemKind(kind, doc.doc)
-      // Create a new CompletionItem object
+      // Use doc.description from CompletionDoc (which should be the primary source now)
+      let descriptionText = doc.description || doc.doc?.desc || '' // Fallback to old way if new description isn't there
+      descriptionText = Helpers.formatUrl(Helpers?.checkDesc(descriptionText))
+
+      let detailText = kind ?? ''
+      if (doc.libId) {
+        detailText += ` (from ${doc.libId})`
+      }
+
+      // Enrich documentation with args or fields
+      let extraDocs = ''
+      if (doc.args && doc.args.length > 0) {
+        extraDocs += `\n\n**Parameters:**\n`
+        doc.args.forEach((arg: any) => {
+          extraDocs += `- \`${arg.name}\`: ${arg.displayType || arg.type} ${arg.desc ? `- ${arg.desc}` : ''}\n`
+        })
+      }
+      if (doc.fields && doc.fields.length > 0) { // For UDTs/Enums
+        const fieldTitle = doc.kind?.toLowerCase().includes('enum') ? '**Members:**' : '**Fields:**'
+        extraDocs += `\n\n${fieldTitle}\n`
+        doc.fields.forEach((field: any) => {
+          extraDocs += `- \`${field.name}\`: ${field.type || ''} ${field.desc ? `- ${field.desc}` : ''}\n`
+        })
+      }
+
+      const itemKind = await this.determineCompletionItemKind(kind, doc.doc) // doc.doc is the original full object
       const completionItem = new vscode.CompletionItem(label, itemKind)
-      completionItem.documentation = new vscode.MarkdownString(`${formattedDesc} \`\`\`pine\n${modifiedSyntax}\n\`\`\``)
-      const detail = kind ?? ''
-      completionItem.detail = detail
+      completionItem.documentation = new vscode.MarkdownString(`${descriptionText}\n${extraDocs}\n\`\`\`pine\n${modifiedSyntax}\n\`\`\``)
+      completionItem.detail = detailText
 
       // Use a snippet string for the insert text
-      let insertText = label
+      let insertText = name // Use `name` from CompletionDoc which might be `fieldName=` or `functionName`
+      if (kind && (kind.includes('Function') || kind.includes('Method'))) {
+        if (doc.args && doc.args.length > 0) {
+          // Create snippet with placeholders for arguments
+          const argPlaceholders = doc.args.map((arg: any, index: number) => `\${${index + 1}:${arg.name}}`).join(', ')
+          insertText = `${name.replace(/\(\)/g, '')}(${argPlaceholders})`
+        } else {
+          insertText = `${name.replace(/\(\)/g, '')}()` // No args, just add parentheses
+        }
+        // For functions/methods, the label was already adjusted. `insertText` should be the snippet.
+      } else if (name.endsWith('=')) { // For named arguments like "fieldName="
+        insertText = `${name}$1` // Add placeholder for value
+      }
       const textBeforeCursor = document.lineAt(position.line).text.substring(0, position.character)
 
       // If it's an argument completion, prepend a space
@@ -189,54 +220,98 @@ export class PineCompletionProvider implements vscode.CompletionItemProvider {
 
       // Check for const fields first (potential enum members) based on docDetails
       if (docDetails?.isConst && kind?.toLowerCase().includes('field')) {
+        // This was an attempt to identify enum members before 'EnumMember' kind existed.
+        // Now, rely on explicit 'EnumMember' kind if available.
+        // If kind is 'EnumMember', it will be handled by the switch or map.
+      }
+
+      const lowerKind = kind.toLowerCase()
+
+      // Specific kind checks first
+      if (lowerKind === 'udt' || lowerKind === 'user type' || lowerKind.includes('udt from')) {
+        return vscode.CompletionItemKind.Class // Or Struct, Class is common for UDTs
+      }
+      if (lowerKind === 'enum' || lowerKind.includes('enum from')) {
+        return vscode.CompletionItemKind.Enum
+      }
+      if (lowerKind === 'enummember' || lowerKind === 'enum member') { // Standardize to 'enummember' from service if possible
         return vscode.CompletionItemKind.EnumMember
       }
-
-      // Define a mapping from item types to completion item kinds
-      const kinds: any = {
-        'User Export Function': vscode.CompletionItemKind.Function,
-        'User Method': vscode.CompletionItemKind.Method,
-        'User Function': vscode.CompletionItemKind.Function,
-        'User Export Type': vscode.CompletionItemKind.Class,
-        'User Type': vscode.CompletionItemKind.Class,
-        Function: vscode.CompletionItemKind.Function,
-        Method: vscode.CompletionItemKind.Method,
-        Local: vscode.CompletionItemKind.Module,
-        Imported: vscode.CompletionItemKind.Module,
-        Integer: vscode.CompletionItemKind.Value,
-        Color: vscode.CompletionItemKind.Color,
-        Control: vscode.CompletionItemKind.Keyword,
-        Variable: vscode.CompletionItemKind.Variable,
-        Boolean: vscode.CompletionItemKind.EnumMember,
-        Constant: vscode.CompletionItemKind.Constant,
-        Type: vscode.CompletionItemKind.Class,
-        Annotation: vscode.CompletionItemKind.Reference,
-        Property: vscode.CompletionItemKind.Property,
-        Parameter: vscode.CompletionItemKind.TypeParameter,
-        Field: vscode.CompletionItemKind.Field,
-        Enum: vscode.CompletionItemKind.Enum,
-        EnumMember: vscode.CompletionItemKind.EnumMember,
-        'Literal String': vscode.CompletionItemKind.Text, // For "" string literals
-        Other: vscode.CompletionItemKind.Value,
+      if (lowerKind === 'constructor' || lowerKind.includes('udt constructor')) {
+        return vscode.CompletionItemKind.Constructor
+      }
+       if (lowerKind === 'parameter' || lowerKind === 'param' || lowerKind === 'arg' || lowerKind === 'argument') {
+        return vscode.CompletionItemKind.TypeParameter // Or .Parameter, but TypeParameter is often used for func/method params
       }
 
-      // For each key in the mapping, if the kind includes the key, return the corresponding completion item kind
-      // Check for exact match first, then .includes()
-      const lowerKind = kind.toLowerCase()
-      for (const key in kinds) {
-        if (lowerKind === key.toLowerCase()) {
-          return kinds[key]
+
+      // General mapping (can be extended)
+      const kindMap: { [key: string]: vscode.CompletionItemKind } = {
+        function: vscode.CompletionItemKind.Function,
+        method: vscode.CompletionItemKind.Method,
+        variable: vscode.CompletionItemKind.Variable,
+        constant: vscode.CompletionItemKind.Constant,
+        field: vscode.CompletionItemKind.Field,
+        property: vscode.CompletionItemKind.Property, // Often used interchangeably with Field
+        class: vscode.CompletionItemKind.Class, // If 'class' kind is used for UDTs
+        struct: vscode.CompletionItemKind.Struct, // If 'struct' kind is used
+        keyword: vscode.CompletionItemKind.Keyword,
+        module: vscode.CompletionItemKind.Module, // For imports or namespaces
+        color: vscode.CompletionItemKind.Color,
+        value: vscode.CompletionItemKind.Value,
+        text: vscode.CompletionItemKind.Text,
+        reference: vscode.CompletionItemKind.Reference, // For annotations or similar
+        type: vscode.CompletionItemKind.Interface, // 'Type' can often mean an interface or type alias
+        interface: vscode.CompletionItemKind.Interface,
+        snippet: vscode.CompletionItemKind.Snippet,
+        file: vscode.CompletionItemKind.File,
+        folder: vscode.CompletionItemKind.Folder,
+        unit: vscode.CompletionItemKind.Unit, // For units of measure if applicable
+        event: vscode.CompletionItemKind.Event,
+        operator: vscode.CompletionItemKind.Operator,
+        // Pine specific that were there:
+        'user export function': vscode.CompletionItemKind.Function,
+        'user method': vscode.CompletionItemKind.Method,
+        'user function': vscode.CompletionItemKind.Function,
+        'user export type': vscode.CompletionItemKind.Class,
+        local: vscode.CompletionItemKind.Module,
+        imported: vscode.CompletionItemKind.Module,
+        integer: vscode.CompletionItemKind.Value,
+        control: vscode.CompletionItemKind.Keyword,
+        boolean: vscode.CompletionItemKind.EnumMember, // Boolean constant often like an enum member
+        annotation: vscode.CompletionItemKind.Reference,
+        'literal string': vscode.CompletionItemKind.Text,
+        other: vscode.CompletionItemKind.Value,
+
+      }
+
+      // Try exact match
+      if (kindMap[lowerKind]) {
+        return kindMap[lowerKind]
+      }
+
+      // Try partial match (e.g., "Function from LibX" contains "function")
+      for (const key in kindMap) {
+        if (lowerKind.includes(key)) {
+          return kindMap[key]
         }
       }
-      for (const key in kinds) {
-        if (lowerKind.includes(key.toLowerCase())) {
-          return kinds[key]
-        }
+
+      // Fallback, could use docDetails for more hints
+      // For example, if docDetails has `thisType` it's likely a method.
+      // If docDetails has `args` it's likely a function or method.
+      // If docDetails has `fields` it's likely a UDT/Class/Enum.
+      if (docDetails?.thisType) return vscode.CompletionItemKind.Method;
+      if (docDetails?.args) return vscode.CompletionItemKind.Function; // Could be Constructor too, but handled above
+      if (docDetails?.fields || docDetails?.members) { // .members for enums
+          if (kind?.toLowerCase().includes('enum')) return vscode.CompletionItemKind.Enum; // Check again if kind had 'enum'
+          return vscode.CompletionItemKind.Class; // Default for things with fields
       }
-      // If no matching key is found, return Text as the default kind
-      return vscode.CompletionItemKind.Text
+
+
+      return vscode.CompletionItemKind.Text // Default fallback
     } catch (error) {
-      console.error(error)
+      console.error('Error in determineCompletionItemKind:', error)
       return vscode.CompletionItemKind.Text
     }
   }
@@ -347,46 +422,53 @@ export class PineCompletionProvider implements vscode.CompletionItemProvider {
           continue
         }
 
-        // Determine the kind based on the data
-        let itemKind: vscode.CompletionItemKind
-        if (
-          completionData.kind?.toLowerCase().includes('field') ||
-          completionData.kind?.toLowerCase().includes('property')
-        ) {
-          itemKind = vscode.CompletionItemKind.Field
-          // Let determineCompletionItemKind handle all kind assignments consistently
-          // The specific if/else if here for field/property/parameter was overriding it.
-          itemKind = await this.determineCompletionItemKind(completionData.kind, completionData)
+        // completionData is already a CompletionDoc object from PineCompletionService.getArgumentCompletions
+        const docData = completionData as CompletionDoc
 
-          const docData = completionData as CompletionDoc
-          const completionItem = await this.createCompletionItem(
-            document,
-            docData.name,
-            docData.namespace ?? null,
-            docData,
-            position,
-            true,
-          )
+        // The name from CompletionDoc for arguments should be like "paramName="
+        // The kind should be "Parameter" or similar, set by the service.
+        // Let createCompletionItem handle the details based on CompletionDoc.
+        const completionItem = await this.createCompletionItem(
+          document,
+          docData.name, // e.g., "length="
+          docData.namespace ?? null,
+          docData, // Pass the full CompletionDoc
+          position,
+          true, // True for argument completion
+        )
 
-          if (completionItem) {
-            completionItem.kind = itemKind
-            completionItem.sortText = `order${index.toString().padStart(4, '0')}`
-            this.completionItems.push(completionItem)
-            anyAdded = true
-          }
-          index++
+        if (completionItem) {
+          // Kind is already set by createCompletionItem via determineCompletionItemKind
+          // Sort text is also set by CompletionService if needed, or can be set here.
+          // Ensure createCompletionItem handles sortText or set it here if it's specific to arg context.
+          // completionItem.sortText = `order${index.toString().padStart(4, '0')}`; // Already in CompletionDoc from service
+          this.completionItems.push(completionItem)
+          anyAdded = true
         }
+        index++
+      } // End of loop
 
-        // Only clear completions if there are no more to suggest
-        if (!anyAdded) {
-          PineSharedCompletionState.clearCompletions()
-          return []
-        }
+      // Only clear completions if there are no more to suggest (moved outside loop)
+      if (!anyAdded && completionsFromState.length > 0) {
+        // If we had items but none were added (e.g., all filtered out), clear.
+        // Or, if completionsFromState was empty to begin with, this won't run.
+        // The original logic might have cleared too eagerly if the first item wasn't added.
+        PineSharedCompletionState.clearCompletions()
+        return []
+      }
 
+      if (this.completionItems.length > 0) { // Check if any items were actually added
         return new vscode.CompletionList(this.completionItems)
+      } else {
+        // If completionsFromState was not empty but resulted in no items (e.g. all filtered by prefix)
+        // then we might not want to clear, to allow user to backspace and see them again.
+        // However, if the intent is that once argumentCompletions is called, the state is "used", then clear.
+        // For now, let's assume if nothing is added, the "current set" is exhausted.
+        PineSharedCompletionState.clearCompletions()
+        return []
       }
     } catch (error) {
-      console.error(error)
+      console.error('Error in argumentCompletions:', error)
       PineSharedCompletionState.clearCompletions()
       return []
     }

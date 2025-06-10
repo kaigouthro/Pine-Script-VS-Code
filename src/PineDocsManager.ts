@@ -40,6 +40,7 @@ export class PineDocsManager {
   functionsDocs: Record<string, any>[]
   functions2Docs: Record<string, any>[]
   completionFunctionsDocs: Record<string, any>[]
+  enumsDocs: Record<string, any>[] = [] // Added for enums
   annotationsDocs: Record<string, any>[]
   cleaned = false
 
@@ -59,6 +60,7 @@ export class PineDocsManager {
     this.variables2Docs = []
     this.functions2Docs = []
     this.completionFunctionsDocs = []
+    this.enumsDocs = [] // Initialize enumsDocs
     this.typesDocs = this.Docs.types[0].docs
     this.fieldsDocs = this.Docs.fields[0].docs
     this.methodsDocs = this.Docs.methods[0].docs
@@ -226,6 +228,8 @@ export class PineDocsManager {
         return this.getFields()
       case 'fields2':
         return this.getFields2()
+      case 'enums': // Added for enums
+        return this.enumsDocs
       default:
         return []
     }
@@ -283,6 +287,9 @@ export class PineDocsManager {
         break
       case 'fields2':
         this.fields2Docs = docs
+        break
+      case 'enums': // Added for enums
+        this.enumsDocs = docs
         break
     }
   }
@@ -521,7 +528,7 @@ export class PineDocsManager {
    * @returns The cleaned docs.
    */
   cleanDocs() {
-    const docs = ['methods2', 'variables2', 'completionFunctions', 'functions2', 'UDT', 'fields2']
+    const docs = ['methods2', 'variables2', 'completionFunctions', 'functions2', 'UDT', 'fields2', 'enums'] // Added 'enums'
     for (const doc of docs) {
       this.setSwitch(doc, [])
     }

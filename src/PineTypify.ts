@@ -49,6 +49,18 @@ export class PineTypify {
   private udtRegex: RegExp =
     /^\s+(?:(?:(?:(array|matrix|map)<(([a-zA-Z_][a-zA-Z_0-9]*\.)?([a-zA-Z_][a-zA-Z_0-9]*),)?(([a-zA-Z_][a-zA-Z_0-9]*\.)?([a-zA-Z_][a-zA-Z_0-9]*))>)|([a-zA-Z_][a-zA-Z_0-9]*\.)?([a-zA-Z_][a-zA-Z_0-9]*)\s*(\[\])?)\s+)([a-zA-Z_][a-zA-Z0-9_]*)(?:(?=\s*=\s*)(?:('.*')|(\".*\")|(\d*(\.(\d+[eE]?\d+)?\d*|\d+))|(#[a-fA-F0-9]{6,8})|(([a-zA-Z_][a-zA-Z0-9_]*\.)*[a-zA-Z_][a-zA-Z0-9_]*)))?$/gm
 
+  // NOTE (from subtask "Address Type Inference and Nested Completions"):
+  // The role of PineTypify, especially its auto-annotation feature (`typifyDocument`),
+  // needs to be re-evaluated in light of authoritative type information now being provided
+  // by the external linter. Linter-provided types (available via PineDocsManager) should
+  // generally be considered the source of truth for language server features like hover
+  // information and completions.
+  // PineTypify's inference logic (`inferTypeFromValue`) might still be useful for
+  // on-the-fly estimations or specific editor utilities, but its direct modification
+  // of code for type annotation should be used cautiously or potentially revised
+  // to align with or complement the linter's data. For now, the primary mechanism for
+  // "type assignment" as perceived by LS features will be the lint data.
+
   /**
    * Parses a type string into a ParsedType object.
    * @param typeString The type string to parse.

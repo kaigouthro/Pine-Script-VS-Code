@@ -76,33 +76,50 @@ export class PineHoverBuildMarkdown {
       }
 
       if (!syntax || syntax === '') {
-        return [key]
+        // If syntax is still empty, attempt to use key as a fallback, especially for simple constants or variables.
+        syntax = key
       }
 
-      if (keyedDocs && keyedDocs.thisType) {
+      // If keyedDocs itself has a libId, it can be added here or in the main hover provider
+      let libIdText = '';
+      if (keyedDocs?.libId) {
+        // This will be outside the ```pine block, which is better.
+        // Let's move libId display to PineHoverProvider.createHoverMarkdown
+        // libIdText = `\n**Library:** ${keyedDocs.libId}\n`;
+      }
+
+      if (keyedDocs && keyedDocs.thisType && regexId !== 'method') { // Ensure regexId is updated if thisType is present
         regexId = 'method'
       }
 
-      let syntaxPrefix = this.getSyntaxPrefix(syntax, regexId) // fieldPropertyAddition
+      let syntaxPrefix = this.getSyntaxPrefix(syntax, regexId)
 
-      if (regexId !== 'control' && regexId !== 'UDT') {
+      if (regexId !== 'control' && regexId !== 'UDT') { // UDTs have their own block formatting typically
         if (syntax.includes('\n') && regexId !== 'param') {
+          // For multi-line syntaxes (like some function signatures), apply prefix to each line.
           syntax = syntax
             .split('\n')
-            .map((s: string) => syntaxPrefix + s)
-            .join('\n\n')
+            .map((s: string) => syntaxPrefix + s.trim()) // Trim each line before prefixing
+            .join('\n') // Use single \n for tighter code blocks
         } else {
           syntax = syntaxPrefix + syntax.trim()
         }
+      } else if (regexId === 'UDT' && !syntax.startsWith('type ')) {
+        // Ensure UDT syntax starts with "type" keyword if not already present
+        // syntax = `type ${syntax}`; // This might be too aggressive if syntax is already complete
       }
+
 
       if (['UDT', 'field', 'function', 'method'].includes(regexId)) {
         syntax = this.addDefaultArgsToSyntax(syntax, keyedDocs)
       }
 
-      return [this.cbWrap(syntax), '***  \n']
+      // Ensure syntax is not empty before wrapping, fallback to key if needed
+      const finalSyntaxString = (syntax && syntax.trim() !== '') ? syntax : key;
+
+      return [this.cbWrap(finalSyntaxString), '***  \n'] // Add libIdText here if kept in this method
     } catch (error) {
-      console.error(error)
+      console.error('Error in appendSyntax:', error)
       return []
     }
   }
@@ -260,18 +277,24 @@ export class PineHoverBuildMarkdown {
    * @returns A promise that resolves to an array containing the description.
    */
   static async appendDescription(keyedDocs: PineDocsManager, regexId: string) {
-    if (regexId === 'field') {
-      return []
-    }
+    // if (regexId === 'field') { // Fields can have descriptions
+    //   return []
+    // }
     try {
-      const infoDesc = keyedDocs?.info ?? keyedDocs?.desc
-      if (infoDesc) {
-        const description = Array.isArray(infoDesc) ? infoDesc.join('  \n') : infoDesc
-        return [Helpers.formatUrl(description)]
+      // Prioritize keyedDocs.desc as it's the new direct field from lint
+      let description = keyedDocs?.desc
+      if (Array.isArray(description)) {
+        description = description.join('\n\n') // Join paragraphs with double newline for markdown
+      } else if (!description) {
+        description = keyedDocs?.info // Fallback to 'info'
+      }
+
+      if (description) {
+        return [Helpers.formatUrl(description.toString())] // Ensure it's a string
       }
       return []
     } catch (error) {
-      console.error(error)
+      console.error('Error in appendDescription:', error)
       return []
     }
   }
@@ -293,19 +316,26 @@ export class PineHoverBuildMarkdown {
       // If a namespace is provided and the symbol is a method with arguments, add a namespace indicator
       for (const argFieldInfo of keyedDocs[argsOrFields]) {
         // Loop over the arguments or fields
-        if (!argFieldInfo) {
-          // If no information is provided for the argument or field, skip it
+        if (!argFieldInfo || !argFieldInfo.name) { // Ensure argFieldInfo and its name exist
           continue
         }
-        const description = this.getDescriptionAndTypeKey(argFieldInfo) // Get the description and type of the argument or field
-        const qm = argsOrFields === 'args' && (argFieldInfo?.required ?? true) ? ':' : '?:' // If the argument or field is optional, add a '?' to its name
-        const arg = Helpers.boldWrap(`${argFieldInfo.name}${qm}`) // Format the name of the argument or field
-        build.push(`- ${arg} ${Helpers.formatUrl(description) ?? ''}  \n`) // Add the argument or field to the markdown string
+        // Use argFieldInfo.desc directly for description
+        // Type comes from argFieldInfo.type or argFieldInfo.displayType
+        const typeString = argFieldInfo.displayType || argFieldInfo.type || ''
+        let paramDesc = `\`${typeString}\`` // Type in backticks
+        if (argFieldInfo.desc) {
+          paramDesc += ` - ${argFieldInfo.desc}` // Append description if available
+        }
+
+        const requiredIndicator = argsOrFields === 'args' && !(argFieldInfo?.required === false) ? '' : ' (optional)' // Assuming true if 'required' is not explicitly false
+        const argName = Helpers.boldWrap(`${argFieldInfo.name}`)
+
+        build.push(`- ${argName}${requiredIndicator}: ${Helpers.formatUrl(paramDesc)}  \n`)
       }
-      // Return the markdown string
       return build
-    } catch (error) {
-      console.error(error)
+    } catch (error)
+     {
+      console.error('Error in appendParamsFields:', error)
       return []
     }
   }
@@ -413,35 +443,27 @@ export class PineHoverBuildMarkdown {
    */
   static async appendReturns(keyedDocs: PineDocsManager, regexId: string) {
     if (['UDT', 'field', 'variable', 'constant', 'control', 'param', 'annotation'].includes(regexId)) {
-      return []
+      return [] // These don't typically have 'return' values in this context
     }
     try {
-      // If the symbol is a method, add the return type to the syntax
       if (keyedDocs) {
-        const returns = Helpers.returnTypeArrayCheck(keyedDocs)
-        if (returns) {
-          // If the return type is not a string, add the return type to the syntax
-          const details = this.appendDetails(Helpers.replaceType(returns) ?? returns, 'Returns')
-          if (!returns.includes('`')) {
-            const split = details[0].split(' - ')
-            // If the return type is a user type, add backticks around it
-            split[1] = '`' + split[1]
-            split[split.length - 1] += '`'
-            // Join the parts of the syntax back together and return the result
-            details[0] = split.join(' - ')
-            // Return the syntax with the return type added
-            return details
-          }
-          if (Array.isArray(details)) {
-            return details
-          }
-          return [details]
+        // Use keyedDocs.returnedTypes (array of strings)
+        const returnedTypes = keyedDocs.returnedTypes
+        if (returnedTypes && Array.isArray(returnedTypes) && returnedTypes.length > 0) {
+          const typesString = returnedTypes.map(type => `\`${Helpers.replaceType(type)}\``).join(', ')
+          return this.appendDetails(typesString, 'Returns')
+        } else if (keyedDocs.type && (regexId === 'function' || regexId === 'method')) {
+          // Fallback to keyedDocs.type if returnedTypes is not available but it's a function/method
+          const legacyReturn = Helpers.returnTypeArrayCheck(keyedDocs) // This helper might use .type or .syntax
+           if (legacyReturn) {
+            return this.appendDetails(`\`${Helpers.replaceType(legacyReturn)}\``, 'Returns')
+           }
         }
-        return ['']
       }
+      return []
     } catch (error) {
-      console.error(error)
-      return ['']
+      console.error('Error in appendReturns:', error)
+      return []
     }
   }
 

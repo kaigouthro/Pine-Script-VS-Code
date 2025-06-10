@@ -1,0 +1,73 @@
+# TODO - Refactor Completions, Hovers, and Signature Help
+
+- [ ] **Modify `PineFormatResponse.ts` to Process New Lint Format**:
+    - [ ] Update `setFunctions()` to parse the `response.result.functions` array. For each function:
+        - [ ] Store its name, library ID (`libId`), arguments (including name, `displayType`, `allowedTypeIDs`, `desc`, `required`), return types (`returnedTypes`), overall description (`desc`), and syntax.
+        - [ ] Distinguish between regular functions and methods (`thisType`).
+        - [ ] Handle UDT constructors (e.g., `Lib.DebugUDT.new`) which appear in this array.
+    - [ ] Update `setVariables()` to parse `response.result.variables`, storing name, type, definition location, and `scopeId`.
+    - [ ] Update `setUDT()` to parse `response.result.types`. For each UDT:
+        - [ ] Store its name, library ID (`libId`), fields (including name, type, `desc`), and overall description (`desc`).
+    - [ ] Add a new method `setEnums()` to parse `response.result.enums`. For each enum:
+        - [ ] Store its name, library ID (`libId`), members/fields (including name, `title`, `desc`), and overall description (`desc`).
+    - [ ] Ensure all extracted data (especially descriptions, library IDs, and parameter/field details) is correctly passed to `PineDocsManager`.
+- [ ] **Adapt `PineDocsManager.ts` to Store Enhanced Data**:
+    - [ ] Review existing data structures (`functions2Docs`, `UDTDocs`, `fields2Docs`, etc.).
+    - [ ] Ensure it can store the new detailed information, including library IDs for each symbol, full argument metadata for functions/methods, field metadata for UDTs, and enum member metadata.
+    - [ ] Consider if new maps are needed (e.g., a dedicated map for enums or a more unified symbol table). For now, assume enhancing existing structures is sufficient.
+    - [ ] Modify `setDocs` or specific setters if necessary to handle the richer data structure coming from `PineFormatResponse`.
+- [ ] **Refactor `PineCompletionService.ts` to Utilize New Data**:
+    - [ ] Update `CompletionDoc` interface to include fields for library origin and potentially richer description structures.
+    - [ ] Modify `getGeneralCompletions()`:
+        - [ ] Ensure it correctly retrieves UDTs and Enums as completable items.
+        - [ ] When creating `CompletionDoc` for imported symbols, include their library origin (`libId` transformed into a user-friendly string).
+    - [ ] Modify `getMethodCompletions()`:
+        - [ ] Utilize `thisType` from the new lint data for more accurate method resolution.
+        - [ ] Include library origin for methods from libraries.
+    - [ ] Modify `getUdtConstructorCompletions()`:
+        - [ ] This might be simplified or integrated into `getGeneralCompletions` if UDT constructors (e.g., `MyType.new`) are treated as regular functions sourced from `PineDocsManager`. The service should still be able to provide completions for constructor parameters.
+    - [ ] Modify `getInstanceFieldCompletions()`:
+        - [ ] For UDT instances (`myUdtVar.`), correctly fetch and suggest fields with their types and descriptions from `PineDocsManager`.
+        - [ ] Implement nested field completions (e.g., `myUdt.myField.nestedField`) by recursively looking up the type of `myField` and providing its fields.
+        - [ ] For Enum variables (`enumVar = MyEnum.`), suggest enum members.
+    - [ ] Modify `getArgumentCompletions()`:
+        - [ ] Fetch the detailed argument list (name, type, desc, required) for the current function/method from `PineDocsManager` (via `getFunctionDocs`).
+        - [ ] Provide named parameter completions (e.g., `fieldName=`).
+        - [ ] Provide type-appropriate value suggestions if possible (this might be a stretch goal depending on `possibleValues` in lint data or type matching).
+    - [ ] Update `getFunctionDocs()` to ensure it retrieves the fully detailed function/method/constructor information stored by `PineDocsManager`.
+- [ ] **Update `PineCompletionProvider.ts`**:
+    - [ ] In `createCompletionItem()`:
+        - [ ] Display library origin in `detail` or `documentation` for imported symbols.
+        - [ ] Use the richer descriptions from `CompletionDoc`.
+        - [ ] Adjust label formatting for UDT constructor parameters and function parameters.
+    - [ ] In `argumentCompletions()`:
+        - [ ] Ensure it correctly processes the richer `CompletionDoc` items for parameters (named parameters, descriptions).
+    - [ ] In `determineCompletionItemKind()`:
+        - [ ] Add or refine `vscode.CompletionItemKind` for UDTs and Enums to provide distinct icons.
+    - [ ] Address missing parameter completions for all functions/methods when typing `myFunction(`. This relies on `argumentCompletions` and the data from `PineSignatureHelpProvider` via `PineSharedCompletionState`.
+    - [ ] Address UDT constructor parameter completions (`MyUDT.new(fieldName=)`).
+    - [ ] Address Enum member completions (`MyEnum.MEMBER_NAME`).
+- [ ] **Update `PineHoverProvider/PineHoverProvider.ts`**:
+    - [ ] In `createHoverMarkdown()`:
+        - [ ] Include library origin for imported symbols.
+        - [ ] Display detailed descriptions for symbols, parameters, and UDT/Enum fields.
+        - [ ] Ensure hover information for variables correctly shows their inferred type from the lint data.
+    - [ ] Ensure nested field hover information is accurate.
+- [ ] **Update `PineSignatureHelpProvider.ts`**:
+    - [ ] In `provideSignatureHelp()`:
+        - [ ] Modify `buildSignatures()` and `buildParameters()` to use the `args` array (with name, type, desc, required status) from the function/method/constructor documentation retrieved from `PineDocsManager` (via `Class.pineCompletionService.getFunctionDocs`).
+        - [ ] Display parameter names and their descriptions accurately.
+        - [ ] Correctly handle UDT constructor signatures (e.g., `MyUDT.new(param1, param2)`).
+    - [ ] Ensure `sendCompletions()` correctly populates `PineSharedCompletionState` with named parameters for argument completions.
+- [ ] **Address Type Inference and Nested Completions (Cross-Cutting)**:
+    - [ ] This is largely covered by changes in `PineCompletionService` (for `getInstanceFieldCompletions`) and `PineHoverProvider`.
+    - [ ] The core idea is that `PineDocsManager` will hold the type information (including UDT field structures) from the lint response. The providers will query this.
+    - [ ] `PineTypify.ts` might be reviewed to see if its inference logic can be simplified or augmented by the direct type information from the linter, or if its auto-annotation feature should primarily rely on the linter's output. For this plan, focus is on using the lint data directly for completions/hovers.
+- [ ] **Testing**:
+    - [ ] Manually test all specified completion scenarios (UDT fields, UDT constructors, function/method parameters, enum members).
+    - [ ] Verify type inference in hover information.
+    - [ ] Test nested completions for UDTs.
+    - [ ] Verify that library origin and descriptions are displayed correctly in completions and hovers.
+    - [ ] Test signature help for various functions, methods, and UDT constructors.
+- [ ] **Submit Changes**: Commit with a descriptive message.
+```

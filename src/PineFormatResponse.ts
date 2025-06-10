@@ -84,50 +84,46 @@ export class PineFormatResponse {
    * Set functions in PineDocsManager.
    */
   setFunctions() {
-    // Get the functions from the response, or default to an empty array if no functions are present
-    let functions = this.response?.functions2 || this.response?.functions || []
-    // Initialize methods, funcs, and funcsCompletions as arrays with one object that has an empty docs array
-    let methods: any[] = [{ docs: [] }]
-    let funcs: any[] = [{ docs: [] }]
-    let funcsCompletions: any[] = [{ docs: [] }]
+    const functions = this.response?.functions || []
+    const methods: any[] = [{ docs: [] }]
+    const funcs: any[] = [{ docs: [] }]
+    const funcsCompletions: any[] = [{ docs: [] }]
 
-    for (const doc of functions) {
-      // Iterate over each doc in functions
-      for (let func of doc.docs) {
-        // Iterate over each function in doc.docs
-        // Match the function syntax to extract the returned type
-        const match = /(?:\w+\.)?(\w+)\(.+\u2192\s*(.*)/g.exec(func.syntax)
-        if (match) {
-          // Set the returnedType property of the function
-          func.returnedType = `\`${match[2]}\`` || func.returnType
-        }
-        // If the function does not have a thisType property, add it to funcsCompletions
-        if (!func?.thisType) {
-          const funcCopy = { ...func }
-          funcCopy.isCompletion = true // Set the isCompletion property of the function
-          funcCopy.kind = doc.title.substring(0, doc.title.length - 1) // Set the kind property of the function
-          funcsCompletions[0].docs.push(funcCopy)
-        } else {
-          if (match) {
-            // If the function has a thisType property, it is a method
-            func.methodName = match[1] // Set the methodName property of the function
-          }
-          func.isMethod = true // Set the isMethod and kind properties of the function
-          func.kind = doc.title.substring(0, doc.title.length - 1).replace('Function', 'Method')
-          func.methodSyntax = func.syntax
-          methods[0]?.docs.push(func) // Add the function to the docs array of the first object in methods
-          continue
-        }
-        func.kind = doc.title.substring(0, doc.title.length - 1) // Set the kind property of the function
-        funcs[0].docs.push(func) // Add the function to the docs array of the first object in funcs
+    for (const func of functions) {
+      const funcCopy: Record<string, any> = {
+        name: func.name,
+        libId: func.libId,
+        args: func.args || [],
+        returnedTypes: func.returnedTypes || [],
+        desc: Array.isArray(func.desc) ? func.desc.join('\n') : func.desc,
+        syntax: Array.isArray(func.syntax) ? func.syntax.join('\n') : func.syntax,
+        isCompletion: true, // Assuming all functions from this new source are completable
+      }
+
+      if (func.thisType) {
+        funcCopy.isMethod = true
+        funcCopy.thisType = func.thisType
+        funcCopy.kind = func.libId ? `Method from ${func.libId}` : 'Local Method'
+        // Ensure 'name' is the method name for methods2Docs keying if PineDocsManager expects that
+        // For methods, syntax might already be in a suitable format or might need specific parsing if PineDocsManager relies on it.
+        // The old logic used a regex for methodName, if func.name is already the method name, it's simpler.
+        methods[0].docs.push(funcCopy)
+      } else if (func.name && func.name.includes('.new')) {
+        funcCopy.kind = func.libId ? `Constructor from ${func.libId}` : 'UDT Constructor'
+        // Add to general functions and completion functions
+        funcs[0].docs.push(funcCopy)
+        funcsCompletions[0].docs.push(funcCopy)
+      } else {
+        funcCopy.kind = func.libId ? `Function from ${func.libId}` : 'Function'
+        funcs[0].docs.push(funcCopy)
+        funcsCompletions[0].docs.push(funcCopy)
       }
     }
 
-    // If getFunctionsChange is true, set the docs for funcsCompletions, funcs, and methods and add the confirmations to this.confirmed
     if (PineResponseFlow.docChange && functions.length > 0) {
-      Class.PineDocsManager.setDocs(funcsCompletions, 'completionFunctions')
-      Class.PineDocsManager.setDocs(funcs, 'functions2')
-      Class.PineDocsManager.setDocs(methods, 'methods2')
+      Class.PineDocsManager.setDocs('completionFunctions', funcsCompletions)
+      Class.PineDocsManager.setDocs('functions2', funcs)
+      Class.PineDocsManager.setDocs('methods2', methods)
     }
   }
 
@@ -135,19 +131,22 @@ export class PineFormatResponse {
    * Set variables in PineDocsManager.
    */
   setVariables() {
-    // Get the variables from the response, or default to an empty array if no variables are present
-    const variables = this.response?.variables2 ?? this.response?.variables ?? []
-    variables.forEach((docVars: any) => {
-      // Iterate over each variable in variables
-      for (const variable of docVars.docs) {
-        // Iterate over each doc in docVars.docs
-        variable.kind = docVars.title.substring(0, docVars.title.length - 1) // Set the kind property of the variable
-      }
-    })
+    const variables = this.response?.variables || []
+    const formattedVariables: any[] = [{ docs: [] }]
 
-    // If getVariablesChange is true, set the docs for variables and add the confirmation to this.confirmed
+    for (const variable of variables) {
+      formattedVariables[0].docs.push({
+        name: variable.name,
+        type: variable.type,
+        definition: variable.definition,
+        scopeId: variable.scopeId,
+        kind: 'Variable', // Potentially add scope or type info here: e.g. `Variable (local)` or `Variable (type: ${variable.type})`
+        // desc: variable.desc, // If description is available
+      })
+    }
+
     if (PineResponseFlow.docChange && variables.length > 0) {
-      Class.PineDocsManager.setDocs(variables, 'variables2')
+      Class.PineDocsManager.setDocs('variables2', formattedVariables)
     }
   }
 
@@ -155,45 +154,93 @@ export class PineFormatResponse {
    * Set user-defined types and fields in PineDocsManager.
    */
   setUDT() {
-    // Get the types from the response, or default to an empty array if no types are present
-    const types = this.response?.types ?? []
-    // Initialize fields and UDT as arrays with one object that has an empty docs array
-    const fields: Record<string, any>[] = [{ docs: [] }]
-    const UDT: Record<string, any>[] = [{ docs: [] }]
+    const types = this.response?.types || []
+    const fieldsCollection: Record<string, any>[] = [{ docs: [] }]
+    const udtCollection: Record<string, any>[] = [{ docs: [] }]
 
-    types.forEach((typeDocs: any) => {
-      // Iterate over each type in types
-      for (const type of typeDocs.docs) {
-        // Iterate over each doc in typeDocs.docs
-        let syntax = [`type ${type.name}`] // Initialize syntax array with the type name
-        type.kind = typeDocs.title.substring(0, typeDocs.title.length - 1) // Set the kind property of the type
-        const buildFields: Record<string, any>[] = [] // Initialize buildFields as an empty array
-        // If the type has fields, process each field
-        if (type.fields) {
-          type.fields.forEach((field: any) => {
-            field.kind = `${type.name} Property` // Set the kind property of the field
-            // Format the syntax of the field
-            const formattedSyntax = `${field.name}: ${
-              field?.type?.replace(/(?:\w+\s+)?([^\s]+)/, '$1').replace(/([\w.]+)\[\]/, 'array<$1>') ?? ''
-            }`
-            field.syntax = formattedSyntax // Set the syntax property of the field
-            field.parent = type.name // Set the parent property of the field
-            syntax.push(formattedSyntax) // Add the field's syntax to the syntax array
-            buildFields.push(field) // Add the field to the buildFields array
-            fields[0].docs.push(field) // Add the field to the docs array of the first object in fields
-          })
+    for (const typeDef of types) {
+      const udtDoc: Record<string, any> = {
+        name: typeDef.name,
+        libId: typeDef.libId,
+        fields: [], // Will be populated by processed field objects
+        desc: typeDef.desc,
+        kind: typeDef.libId ? `UDT from ${typeDef.libId}` : 'UDT',
+        // syntax: `type ${typeDef.name}` // Basic syntax, can be expanded
+      }
 
-          type.syntax = syntax.join('\n    ') // Join the syntax array into a string and set the syntax property of the type
-          type.fields = buildFields // Set the fields property of the type to the buildFields array
-          UDT[0].docs.push(type) // Add the type to the docs array of the first object in UDT
+      let udtSyntax = [`type ${typeDef.name}`]
+      if (typeDef.fields) {
+        for (const field of typeDef.fields) {
+          const fieldDoc = {
+            name: field.name,
+            type: field.type,
+            desc: field.desc,
+            parent: typeDef.name, // Link field to its parent UDT
+            libId: typeDef.libId, // Carry over libId for context
+            kind: `${typeDef.name} Property`,
+            syntax: `${field.name}: ${field.type}`, // Simplified syntax
+          }
+          udtDoc.fields.push(fieldDoc) // Add processed field to UDT doc
+          fieldsCollection[0].docs.push(fieldDoc) // Add to global fields collection
+          udtSyntax.push(`    ${field.name}: ${field.type}`)
         }
       }
-    })
+      udtDoc.syntax = udtSyntax.join('\n')
+      udtCollection[0].docs.push(udtDoc)
+    }
 
-    // If getTypesChange is true, set the docs for fields and UDT and add the confirmations to this.confirmed
     if (PineResponseFlow.docChange && types.length > 0) {
-      Class.PineDocsManager.setDocs(fields, 'fields2')
-      Class.PineDocsManager.setDocs(UDT, 'UDT')
+      Class.PineDocsManager.setDocs('fields2', fieldsCollection)
+      Class.PineDocsManager.setDocs('UDT', udtCollection)
+    }
+  }
+
+  /**
+   * Set enums in PineDocsManager.
+   */
+  setEnums() {
+    const enums = this.response?.enums || []
+    const enumCollection: Record<string, any>[] = [{ docs: [] }]
+    // Potentially a separate collection for enum members if they need to be globally searchable for completions like fields.
+    // const enumMemberCollection: Record<string, any>[] = [{ docs: [] }];
+
+    for (const enumDef of enums) {
+      const enumDoc: Record<string, any> = {
+        name: enumDef.name,
+        libId: enumDef.libId,
+        members: [], // Will be populated by processed member objects
+        desc: enumDef.desc,
+        kind: enumDef.libId ? `Enum from ${enumDef.libId}` : 'Enum',
+        // syntax: `enum ${enumDef.name}` // Basic syntax
+      }
+
+      let enumSyntax = [`enum ${enumDef.name}`];
+      if (enumDef.fields) { // Assuming 'fields' holds enum members based on plan
+        for (const member of enumDef.fields) {
+          const memberDoc = {
+            name: member.name,
+            title: member.title, // Or use name if title isn't always present
+            desc: member.desc,
+            parentEnum: enumDef.name,
+            libId: enumDef.libId,
+            kind: 'Enum Member',
+            // syntax: `${member.name}`, // Syntax for enum member
+          }
+          enumDoc.members.push(memberDoc)
+          // If enum members should be globally completable (e.g. MyEnum.MEMBER_NAME)
+          // enumMemberCollection[0].docs.push(memberDoc);
+          enumSyntax.push(`    ${member.name}${member.title ? ` // ${member.title}` : ''}`)
+        }
+      }
+      enumDoc.syntax = enumSyntax.join('\n');
+      enumCollection[0].docs.push(enumDoc)
+    }
+
+    if (PineResponseFlow.docChange && enums.length > 0) {
+      // This assumes PineDocsManager has a way to handle 'enums' or a generic symbol type
+      Class.PineDocsManager.setDocs('enums', enumCollection)
+      // If enum members are stored separately for completion:
+      // Class.PineDocsManager.setDocs('enumMembers', enumMemberCollection);
     }
   }
 
@@ -216,6 +263,7 @@ export class PineFormatResponse {
       this.setFunctions()
       this.setVariables()
       this.setUDT()
+      this.setEnums() // Call the new setEnums method
       this.getLibData()
       Class.PineParser.parseDoc()
       Class.PineParser.parseLibs()

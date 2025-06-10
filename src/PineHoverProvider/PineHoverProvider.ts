@@ -385,24 +385,33 @@ export class PineHoverProvider implements vscode.HoverProvider {
     namespace: string | undefined,
     regexId: string,
   ): Promise<vscode.MarkdownString> {
-    // Assemble an array of promises to execute
-    const promises = [
-      PineHoverBuildMarkdown.appendSyntax(keyedDocs, key, namespace, regexId, this.mapArrayMatrix),
-      PineHoverBuildMarkdown.appendDescription(keyedDocs, regexId),
-      PineHoverBuildMarkdown.appendParams(keyedDocs),
-      PineHoverBuildMarkdown.appendReturns(keyedDocs, regexId),
-      PineHoverBuildMarkdown.appendRemarks(keyedDocs),
-      PineHoverBuildMarkdown.appendSeeAlso(keyedDocs, key),
-    ]
-    // Wait for all promises to resolve and then join their results into a markdown string
-    const markdownContent = await Promise.all(promises).then((markdownSections) => {
-      return markdownSections.flat().join('\n')
-    })
-    // Create a MarkdownString object for the hover content
-    const markdownString = new vscode.MarkdownString(markdownContent)
-    // Allow command URIs, HTTP(S) links and markdown.render setting to be used
-    markdownString.isTrusted = true
-    return markdownString
+    const markdownSections: string[][] = [];
+
+    // Syntax (already returns an array, potentially with a separator)
+    markdownSections.push(await PineHoverBuildMarkdown.appendSyntax(keyedDocs, key, namespace, regexId, this.mapArrayMatrix));
+
+    // Library ID
+    if (keyedDocs?.libId) {
+      markdownSections.push([`**Library:** \`${keyedDocs.libId}\`  \n`]);
+    }
+
+    // Description
+    markdownSections.push(await PineHoverBuildMarkdown.appendDescription(keyedDocs, regexId));
+    // Parameters
+    markdownSections.push(await PineHoverBuildMarkdown.appendParams(keyedDocs));
+    // Return types
+    markdownSections.push(await PineHoverBuildMarkdown.appendReturns(keyedDocs, regexId));
+    // Remarks
+    markdownSections.push(await PineHoverBuildMarkdown.appendRemarks(keyedDocs));
+    // See Also
+    markdownSections.push(await PineHoverBuildMarkdown.appendSeeAlso(keyedDocs, key));
+
+    // Join all sections. Each section is an array of strings. Flatten and join.
+    const markdownContent = markdownSections.flat().join('\n').trim();
+
+    const markdownString = new vscode.MarkdownString(markdownContent);
+    markdownString.isTrusted = true; // Allow command URIs, HTTP(S) links and markdown.render setting
+    return markdownString;
   }
 }
 

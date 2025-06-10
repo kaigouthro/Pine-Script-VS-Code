@@ -113,79 +113,75 @@ export class PineSignatureHelpProvider implements vscode.SignatureHelpProvider {
         const udtMap = Class.PineDocsManager.getMap('UDT', 'types')
         if (udtMap.has(udtName)) {
           isUdtNew = true
-          const udtFunctionName = udtName
+          // const udtFunctionName = udtName; // Not used
         } else {
-          udtName = null
+          // If udtName.new was typed but udtName is not a known UDT, treat as normal function.
+          isUdtNew = false;
+          udtName = null; // Reset udtName if not a valid UDT context
         }
       }
 
       if (isUdtNew && udtName) {
-        // const udtMap = Class.PineDocsManager.getMap('UDT', 'types')
-        // const udtDocs = udtMap.get(udtName)
-        const udtDocs = Class.pineCompletionService.getFunctionDocs(udtName + '.new')
+        const constructorDocs = Class.pineCompletionService.getFunctionDocs(udtName + '.new')
 
-        if (udtDocs && udtDocs.args) { // Expect 'args' from service instead of 'fields'
-          const fieldCompletions: Record<string, any> = {}
-          const fieldArgsForState: CompletionItem[] = []
-          // const fieldNames: string[] = [] // fieldNames will be derived from udtDocs.args
+        if (constructorDocs && Array.isArray(constructorDocs.args)) {
+          const constructorArgs = constructorDocs.args; // This is the array of rich argument objects
+          const argNames = constructorArgs.map((arg: any) => arg.name);
 
-          // The service returns args with 'name', 'type', 'desc', 'default', 'required'
-          const fieldNames = udtDocs.args.map((arg: any) => arg.name)
+          // Populate PineSharedCompletionState with argument details for completion provider
+          const sharedArgsForState: CompletionItem[] = constructorArgs.map((arg: any, index: number) => ({
+            name: `${arg.name}=`,
+            kind: 'Parameter', // Or 'Field' if preferred for UDT constructor params
+            desc: arg.desc || `Parameter ${arg.name} of type ${arg.displayType || arg.type}.`,
+            defaultValue: arg.default,
+            required: arg.required !== false, // Assume required if not explicitly false
+            preselect: index === 0,
+          }));
+          // PineSharedCompletionState.setCompletions({ [udtName + ".new"]: sharedArgsForState }); // Or set per active arg later
+          PineSharedCompletionState.setArgs(argNames); // Set names for active parameter calculation
 
-          udtDocs.args.forEach((field: any, index: number) => {
-            const completionItem: CompletionItem = {
-              name: `${field.name}=`, // Service should provide name directly
-              kind: 'Field', // Service provides kind, but here we know it's a field for .new()
-              desc: field.desc || `Field ${field.name} of type ${field.type}.`,
-              defaultValue: field.default, // Service provides default
-              required: field.required, // Service provides required
-              preselect: index === 0,
-            }
-            fieldArgsForState.push(completionItem)
-            // fieldNames.push(field.name); // Already handled
-            fieldCompletions[field.name] = [completionItem]
-          })
-
-          PineSharedCompletionState.setArgs(fieldNames)
-
-          const signatureLabel = `${udtName}.new(${udtDocs.args
-            .map((f: any) => `${f.name}: ${f.type}${f.default ? ' = ...' : ''}`)
-            .join(', ')})`
-          const udtSignature: vscode.SignatureInformation = new vscode.SignatureInformation(signatureLabel)
-
-          if (udtDocs.desc) { // UDT's main description, if available from service
-            udtSignature.documentation = new vscode.MarkdownString(udtDocs.desc)
+          // Build SignatureInformation
+          // Use constructorDocs.syntax if available and suitable, otherwise build from args
+          let sigLabel = constructorDocs.syntax;
+          if (!sigLabel || typeof sigLabel !== 'string' || !sigLabel.includes('(')) {
+             sigLabel = `${udtName}.new(${constructorArgs
+            .map((arg: any) => `${arg.name}: ${arg.displayType || arg.type}${arg.default ? ` = ${arg.default}` : ''}`)
+            .join(', ')})`;
           }
 
-          udtSignature.parameters = udtDocs.args.map((field: any) => {
-            const paramLabel = `${field.name}: ${field.type}`
-            let docString = new vscode.MarkdownString()
-            docString.appendCodeblock(`(field) ${paramLabel}`, 'pine')
-            if (field.desc) {
-              docString.appendMarkdown(`\n\n${field.desc}`)
-            }
-            // The old logic for extracting @field from udtDocs.doc might be less relevant
-            // if the service's getFunctionDocs for .new already processes fields into args with descriptions.
-            return new vscode.ParameterInformation(paramLabel, docString)
-          })
-          this.signatureHelp.signatures.push(udtSignature)
-          this.paramIndexes = [fieldNames]
-          this.activeSignature = 0
+          const udtConstructorSignature = new vscode.SignatureInformation(sigLabel);
 
-          this.signatureHelp.activeParameter = this.calculateActiveParameter()
-          PineSharedCompletionState.setActiveParameterNumber(this.signatureHelp.activeParameter)
-
-          const activeFieldDoc = udtDocs.args[this.signatureHelp.activeParameter]
-          if (activeFieldDoc) {
-            const simplifiedDocsForField = {
-              args: udtDocs.args, // Pass all fields (as args) for context
-              name: udtName + '.new',
-            }
-            const udtActiveSignatureHelper = udtDocs.args.map((f: any) => ({ arg: f.name, type: f.type }))
-            await this.sendCompletions(simplifiedDocsForField, udtActiveSignatureHelper)
+          if (constructorDocs.desc) {
+            udtConstructorSignature.documentation = new vscode.MarkdownString(constructorDocs.desc);
           }
 
-          await this.setActiveArg(this.signatureHelp)
+          udtConstructorSignature.parameters = constructorArgs.map((arg: any) => {
+            const paramLabel = `${arg.name}: ${arg.displayType || arg.type}`;
+            let paramDoc = new vscode.MarkdownString();
+            paramDoc.appendCodeblock(`(parameter) ${paramLabel}`, 'pine'); // Use 'parameter' kind
+            if (arg.desc) {
+              paramDoc.appendMarkdown(`\n\n${arg.desc}`);
+            }
+            if (arg.default) {
+              paramDoc.appendMarkdown(`\n\n*Default: \`${arg.default}\`*`);
+            }
+            return new vscode.ParameterInformation(paramLabel, paramDoc);
+          });
+
+          this.signatureHelp.signatures.push(udtConstructorSignature);
+          this.paramIndexes = [argNames]; // Store names for active parameter calculation
+          this.activeSignature = 0; // Only one signature for the constructor usually
+
+          this.signatureHelp.activeParameter = this.calculateActiveParameter();
+          PineSharedCompletionState.setActiveParameterNumber(this.signatureHelp.activeParameter);
+
+          // Send completions for the current active parameter
+          // constructorDocs itself is the rich function object.
+          // activeSignatureHelper needs to be an array of {arg: name, type: type}
+          const activeSignatureHelperForConstructor = constructorArgs.map((arg: any) => ({ arg: arg.name, type: arg.displayType || arg.type }));
+          await this.sendCompletions(constructorDocs, activeSignatureHelperForConstructor);
+
+          await this.setActiveArg(this.signatureHelp);
 
           // --- DEBUG LOGS ---
           // console.log('UDT Name:', udtName)
@@ -369,78 +365,104 @@ export class PineSignatureHelpProvider implements vscode.SignatureHelpProvider {
   }
 
   private buildParameters(
-    docs: PineDocsManager,
-    syntax: string,
+    // docs: PineDocsManager, // Old: expected PineDocsManager structure
+    docs: any, // New: accepting rich function object from PineCompletionService.getFunctionDocs
+    syntax: string, // The signature string for display, may come from docs.syntax
   ): [vscode.ParameterInformation[], string[], Record<string, string>[], string] {
     const parameters: vscode.ParameterInformation[] = []
     const paramIndexes: string[] = []
     const activeSignatureHelper: Record<string, string>[] = []
-    const args: string[] = []
 
-    const syntaxArgs = syntax
-      .replace(/[\w.]+\s*\(/g, '')
-      .replace(/\)\s*(=>|\u2192).*/g, '')
-      .split(',')
-      .filter(Boolean)
-
-    for (const arg of syntaxArgs) {
-      const trimmedArg = arg.trim()
-      const argName = trimmedArg.includes(' ') ? trimmedArg.split(' ').shift() : trimmedArg
-      if (argName) {
-        args.push(argName)
-      }
+    // Use docs.syntax for the main signature string if available and valid, otherwise use/fallback to the passed 'syntax'
+    let displaySyntax = syntax; // Default to passed syntax
+    if (Array.isArray(docs.syntax) && docs.syntax.length > 0) {
+        displaySyntax = Helpers.replaceFunctionSignatures(Helpers.replaceType(docs.syntax[0]));
+    } else if (typeof docs.syntax === 'string') {
+        displaySyntax = Helpers.replaceFunctionSignatures(Helpers.replaceType(docs.syntax));
+    }
+    // If displaySyntax is still just a function name (e.g. no '()'), reconstruct it.
+    if (!displaySyntax.includes('(') && docs.name) {
+        const argsString = (docs.args || [])
+            .map((arg: any) => `${arg.name}: ${arg.displayType || arg.type}`)
+            .join(', ');
+        displaySyntax = `${docs.name}(${argsString})`;
     }
 
-    let updatedSyntax = syntax
 
-    for (const argName of args) {
-      const argDocs = docs.args.find((arg: any) => arg.name === argName)
-      if (!argDocs) {
-        continue
-      }
-
-      const { name, desc } = argDocs
-      const argType = argDocs?.displayType ?? argDocs?.type ?? ''
-
-      const paramLabel = `${argType !== '' ? ' ' : ''}${name}`
-      const { defaultValue, required } = this.getParameterDetails(argDocs)
-      const questionMark = !required && defaultValue !== '' ? '?' : ''
-
-      if (!required && defaultValue !== '') {
-        updatedSyntax = updatedSyntax.replace(RegExp(`\\b${name}\\b`), `${name}?`)
-      }
-
-      const paramDocumentation = new vscode.MarkdownString(
-        `**${
-          required ? 'Required' : 'Optional'
-        }**\n\`\`\`pine\n${paramLabel}${questionMark}: ${argType}${defaultValue}\n\`\`\`\n${desc.trim()}`,
-      )
-
-      activeSignatureHelper.push({ arg: name, type: argType })
-      const startEnd = this.findRegexMatchPosition(updatedSyntax, name)
-
-      if (!startEnd) {
-        continue
-      }
-
-      const paramInfo = new vscode.ParameterInformation(startEnd, paramDocumentation)
-      parameters.push(paramInfo)
-      paramIndexes.push(name)
+    if (!Array.isArray(docs.args)) {
+      // If docs.args is not an array (e.g., missing or wrong format), return empty/default
+      console.warn('docs.args is not an array or is missing in buildParameters for:', docs.name);
+      return [parameters, paramIndexes, activeSignatureHelper, displaySyntax];
     }
 
-    return [parameters, paramIndexes, activeSignatureHelper, updatedSyntax]
+    for (const argDoc of docs.args) { // Iterate directly over the rich argument objects
+      const argName = argDoc.name;
+      const argType = argDoc.displayType || argDoc.type || 'unknown';
+      const argDesc = argDoc.desc || '';
+      const { defaultValue: defaultValueStr, required } = this.getParameterDetails(argDoc); // Use helper for default and required
+
+      const paramLabelForInfo = `${argName}${!required ? '?' : ''}: ${argType}${defaultValueStr}`;
+
+      const paramDocumentation = new vscode.MarkdownString();
+      paramDocumentation.appendMarkdown(`**${argName}**`);
+      if (!required) {
+        paramDocumentation.appendMarkdown(` (optional)`);
+      }
+      paramDocumentation.appendCodeblock(`${argType}${defaultValueStr}`, 'pine');
+      if (argDesc) {
+        paramDocumentation.appendMarkdown(`\n\n${argDesc.trim()}`);
+      }
+
+      // For vscode.ParameterInformation, the label can be a substring of the full signature or just name:type
+      // Let's try to find its position in the displaySyntax or use a simplified label.
+      let paramLabelForVscode: string | [number, number] = `${argName}: ${argType}`; // Fallback label
+      const regexToFindParam = new RegExp(`\\b${argName}\\b`);
+      const matchInSyntax = regexToFindParam.exec(displaySyntax);
+      if (matchInSyntax) {
+          const start = matchInSyntax.index;
+          // Attempt to find the end of the parameter definition (e.g., up to comma, closing paren, or default value)
+          let end = displaySyntax.indexOf(',', start);
+          if (end === -1) end = displaySyntax.indexOf(')', start);
+          if (end === -1) end = displaySyntax.length; // Fallback
+
+          // More precise end: find where type ends, or default value ends
+          const segment = displaySyntax.substring(start, end);
+          paramLabelForVscode = [start, start + segment.trimEnd().length];
+      } else {
+          // If not found in syntax (e.g. syntax was minimal), use the constructed label
+          paramLabelForVscode = paramLabelForInfo;
+      }
+
+
+      parameters.push(new vscode.ParameterInformation(paramLabelForVscode, paramDocumentation));
+      paramIndexes.push(argName);
+      activeSignatureHelper.push({ arg: argName, type: argType });
+    }
+
+    return [parameters, paramIndexes, activeSignatureHelper, displaySyntax];
   }
 
-  private getParameterDetails(argDocs: any): { defaultValue: string; required: boolean } {
-    let defaultValue = ''
-    if (argDocs.default === null || argDocs.default === 'null') {
-      defaultValue = ' = na'
-    } else if (argDocs.default !== undefined && argDocs.default !== 'undefined') {
-      defaultValue = ` = ${argDocs.default}`
+  private getParameterDetails(argDoc: any): { defaultValue: string; required: boolean } {
+    // argDoc is one item from the 'args' array of the function/method documentation
+    let defaultValue = '';
+    // Check if argDoc.default is explicitly provided by the linter
+    if (argDoc.hasOwnProperty('default')) { // Check if 'default' key exists
+        if (argDoc.default === null || argDoc.default === 'null') {
+            defaultValue = ' = na'; // Represent null/na
+        } else if (typeof argDoc.default === 'string' && argDoc.default.trim() !== '') {
+            defaultValue = ` = ${argDoc.default}`;
+        } else if (typeof argDoc.default === 'number' || typeof argDoc.default === 'boolean') {
+            defaultValue = ` = ${argDoc.default.toString()}`;
+        }
+        // If argDoc.default is an empty string or undefined, defaultValue remains empty string.
     }
 
-    const required = argDocs?.required ?? defaultValue === ''
-    return { defaultValue, required }
+    // 'required' should also come directly from argDoc if the linter provides it
+    // If argDoc.required is explicitly false, it's optional.
+    // If argDoc.required is true or undefined (and no default value making it optional), it's required.
+    const required = argDoc.required === true || (argDoc.required !== false && defaultValue === '');
+
+    return { defaultValue, required };
   }
 
   private calculateActiveParameter(): number {
@@ -573,70 +595,106 @@ export class PineSignatureHelpProvider implements vscode.SignatureHelpProvider {
     }
   }
 
-  private getArgTypes(argDocs: Record<string, any>): string[] | null {
+  private getArgTypes(argDoc: Record<string, any>): string[] | null {
+    // argDoc is a rich argument object from the function's 'args' array
     try {
-      let type = argDocs?.allowedTypeIDs ?? [argDocs?.displayType ?? argDocs?.type]
-      if (!type || type.length === 0) {
-        return null
+      let types: string[] = [];
+      if (Array.isArray(argDoc?.allowedTypeIDs) && argDoc.allowedTypeIDs.length > 0) {
+        // TODO: If allowedTypeIDs are numeric IDs, they need to be resolved to type names.
+        // For now, assuming they might contain type names directly or special keywords.
+        // This part might need more context on how allowedTypeIDs are structured and used.
+        // If they are actual type names (e.g., ["string", "series float"]), use them.
+        // If they are IDs that need lookup, that's a larger change.
+        // Let's assume for now they can be processed by Helpers.formatTypesArray or are direct type strings.
+        types = [...argDoc.allowedTypeIDs];
+      } else if (argDoc?.displayType) {
+        types = [argDoc.displayType];
+      } else if (argDoc?.type) {
+        types = [argDoc.type];
       }
 
-      if (Array.isArray(type) && !type.includes(null)) {
-        type = Helpers.formatTypesArray(type)
+      if (types.length === 0) {
+        return null;
       }
 
-      return type
+      // Filter out nulls/undefined before formatting, though types array initialization avoids this.
+      const validTypes = types.filter(t => t !== null && t !== undefined) as string[];
+      if (validTypes.length === 0) {
+        return null;
+      }
+
+      // Helpers.formatTypesArray likely expects an array of type strings and processes them.
+      return Helpers.formatTypesArray(validTypes);
     } catch (error) {
-      console.error('getArgTypes error', error)
+      console.error('getArgTypes error:', error);
       return null
     }
   }
 
   private async sendCompletions(
     docs: Record<string, any>,
-    activeSignatureHelper: Record<string, string>[],
+    activeSignatureHelper: Record<string, string>[], // This seems to be just [{arg: name, type: type}, ...] for the current signature
   ): Promise<void> {
     try {
-      const buildCompletions: Record<string, any> = {}
-      const args = Array.from(docs.args.map((arg: Record<string, any>) => arg.name))
+      const buildCompletions: Record<string, any> = {};
 
-      let paramArray = activeSignatureHelper
-        .map(
-          (param: Record<string, string>): CompletionItem => ({
-            name: `${param.arg}=`,
-            kind: 'Parameter', // Changed from 'Parameter' to 'Field' to better reflect UDT context
-            desc: `Field ${param.arg}.`, // Updated description for clarity
-            preselect: param.arg === this.activeArg,
-          }),
-        )
-        .filter((item: CompletionItem) => !this.usedParams.includes(item.name.replace('=', '')))
+      // docs.args is the array of rich argument objects from the linter
+      if (!Array.isArray(docs.args)) {
+        console.error('sendCompletions: docs.args is not an array for function:', docs.name);
+        return;
+      }
+      const allArgNamesFromDocs = docs.args.map((arg: any) => arg.name);
 
-      for (const argDocs of docs.args) {
-        const argName = argDocs?.name ?? null
-        const match = activeSignatureHelper.some((param) => param.arg === argName)
+      // paramArray: suggestions for "paramName=" items
+      // This should be built from docs.args directly, not activeSignatureHelper which is simpler.
+      const paramArray: CompletionItem[] = docs.args
+        .map((argDoc: any): CompletionItem | null => {
+          if (!argDoc || !argDoc.name) return null;
+          return {
+            name: `${argDoc.name}=`,
+            kind: 'Parameter', // Or "NamedArgument"
+            desc: argDoc.desc || `Parameter ${argDoc.name} of type ${argDoc.displayType || argDoc.type}.`,
+            preselect: argDoc.name === this.activeArg, // Preselect if it's the current active argument
+            // required: argDoc.required, // Not directly used by CompletionItem structure here, but good for context
+            // defaultValue: argDoc.default, // Not directly used by CompletionItem structure here
+          };
+        })
+        .filter((item: CompletionItem | null): item is CompletionItem => item !== null && !this.usedParams.includes(item.name.replace('=', '')));
 
-        if (!match) {
-          buildCompletions[argName] = []
-          continue
+
+      for (const argDoc of docs.args) { // Iterate over rich argDoc from function definition
+        const argName = argDoc.name;
+        if (!argName) continue;
+
+        // Check if this argName is part of the current signature being processed by activeSignatureHelper
+        // This check might be redundant if activeSignatureHelper is for the *active* signature from docs.args already
+        const isActiveSignatureArg = activeSignatureHelper.some(param => param.arg === argName);
+        if (!isActiveSignatureArg) {
+          // This case should ideally not happen if activeSignatureHelper is correctly derived for the current signature
+          buildCompletions[argName] = [];
+          continue;
         }
 
-        const possibleValues = argDocs?.possibleValues ?? []
-        if (possibleValues.length === 0 && !argDocs) {
-          buildCompletions[argName] = []
-          continue
-        }
+        // `possibleValues` needs to be derived/handled. Linter gives `allowedTypeIDs`.
+        // For now, let's assume `extractCompletions` will handle `argDoc` which contains `allowedTypeIDs`.
+        // If `argDoc.possibleValues` was a specific field in the old structure, it's not in the new one.
+        // `extractCompletions` will need to be adapted or this needs to be pre-processed.
+        // For now, pass an empty array for `possibleValues` and let `extractCompletions` rely on `argDoc.allowedTypeIDs` or `argDoc.displayType`.
+        const possibleValuesForExtract: string[] = []; // Placeholder - see extractCompletions
 
-        const def = argDocs?.default ?? null
-        const isString = argDocs.isString ?? false
+        const defaultValue = argDoc.default; // Already extracted in argDoc
+        const displayType = argDoc.displayType || argDoc.type || '';
+        const isString = displayType.toLowerCase() === 'string';
 
-        const completions = [...(await this.extractCompletions(possibleValues, argDocs, def, isString, paramArray))]
-
-        buildCompletions[argName] = [...new Set(completions)]
+        // Pass the rich argDoc to extractCompletions
+        const completions = [...(await this.extractCompletions(possibleValuesForExtract, argDoc, defaultValue, isString, paramArray))];
+        buildCompletions[argName] = [...new Set(completions)];
       }
 
-      PineSharedCompletionState.setCompletions(buildCompletions)
-      PineSharedCompletionState.setArgs(args)
+      PineSharedCompletionState.setCompletions(buildCompletions);
+      PineSharedCompletionState.setArgs(allArgNamesFromDocs); // All arg names for the function
     } catch (error) {
-      console.error('sendCompletions error', error)
+      console.error('sendCompletions error:', error);
     }
   }
 
