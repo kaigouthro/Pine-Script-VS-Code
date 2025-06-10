@@ -41,6 +41,24 @@ export class PineCompletionService {
   }
 
   /**
+   * Cleans a type name by removing modifiers, generic syntax, and array indicators.
+   * e.g., "const series string[]" -> "string", "array<MyUDT>" -> "MyUDT"
+   */
+  private cleanTypeName(type: string | undefined | null): string {
+    if (!type) return '';
+    // Remove modifiers like const, input, series, simple, literal, etc.
+    // Added more Pine Script specific keywords that might appear before a type.
+    let cleanedType = type.replace(/(const|input|series|simple|literal|source|strategy|indicator|library|userdata|defval)\s+/g, '');
+    // Handle array<type>, matrix<type>, map<type, type2> -> type (first generic type)
+    // Using 'gi' for case-insensitive matching just in case type names in generics are not consistently cased.
+    cleanedType = cleanedType.replace(/(?:array|matrix|map)<([\w\.]+)(?:,\s*[\w\.]+)*>/gi, '$1');
+    // Handle type[] -> type
+    cleanedType = cleanedType.replace(/\s*\[\]/g, '');
+    // Trim any remaining whitespace
+    return cleanedType.trim();
+  }
+
+  /**
    * Helper to check for minor typos between a potential match and the target name.
    * This implements the typo tolerance logic from the original code.
    * @param potentialMatch - The text typed by the user.
@@ -336,140 +354,154 @@ export class PineCompletionService {
    */
   getInstanceFieldCompletions(match: string): CompletionDoc[] {
     const completions: CompletionDoc[] = []
-    // This method is called only if match includes a dot by the provider, but add check for safety.
     if (!match || !match.includes('.')) {
       return completions
     }
 
     const parts = match.split('.')
-    // For `obj.field1.field2.part` match:
-    // parts = ["obj", "field1", "field2", "part"]
-    // currentNamespacePath will be "obj.field1.field2"
-    // partialNameAfterLastDot will be "part"
-    // If match ends with '.', parts = ["obj", "field1", "field2", ""], currentNamespacePath = "obj.field1.field2", partialNameAfterLastDot = ""
-
     if (parts.length === 0) {
       return completions
     }
 
-    let currentTypeName: string | null = null
-    let currentLibId: string | undefined = undefined
-    let currentMembers: any[] | null = null
-    let currentNamespaceForCompletionDoc = '' // This will build up e.g., "myUdtVar.field1"
+    let currentTypeName: string | null = null // Cleaned type name of the current object/UDT
+    let currentLibId: string | undefined = undefined // LibId of the UDT whose members are currently being listed
+    let currentMembers: any[] | null = null // Fields/members of the current UDT/Enum
+    let currentNamespaceForCompletionDoc = '' // Builds up the path like "myUdtVar.field1"
 
-    // Resolve the type of the first part (variable or UDT name)
     const firstPart = parts[0]
     const variableDoc = this.docsManager.getMap('variables', 'variables2').get(firstPart)
+
     if (variableDoc && variableDoc.type) {
-      currentTypeName = variableDoc.type
-      currentNamespaceForCompletionDoc = firstPart
-      // LibId of the variable's type, if the type itself is from a library
-      const initialTypeDoc = this.docsManager.getMap('UDT', 'enums').get(currentTypeName!)
-      currentLibId = initialTypeDoc?.libId
-    } else {
-      // Not a variable, maybe a UDT or Enum name directly?
-      const udtOrEnumDoc = this.docsManager.getMap('UDT', 'enums').get(firstPart)
-      if (udtOrEnumDoc) {
-        currentTypeName = firstPart
-        currentLibId = udtOrEnumDoc.libId
-        currentMembers = udtOrEnumDoc.fields || udtOrEnumDoc.members
-        currentNamespaceForCompletionDoc = '' // No prefix for direct UDT/Enum name
+      currentTypeName = this.cleanTypeName(variableDoc.type)
+      currentNamespaceForCompletionDoc = firstPart // Namespace is the variable name itself
+      const initialTypeDef = this.docsManager.getMap('UDT').get(currentTypeName) // UDTs have .fields
+      if (initialTypeDef && initialTypeDef.fields) {
+        currentMembers = initialTypeDef.fields
+        currentLibId = initialTypeDef.libId // LibId of the UDT definition
       } else {
-        // Could be a built-in namespace like 'color' or 'math'
-        // Handled further down if not resolved as UDT/Enum/Variable
+        // If not a UDT, could it be an enum for which fields are being accessed?
+        // Enums usually don't have fields accessed via '.', but members.
+        // Pine Script doesn't have `enum.member.field` syntax.
+        // So if variableDoc.type resolves to an enum, currentMembers should be null here for field access.
+        currentMembers = null;
+      }
+    } else {
+      // Not a variable, maybe a UDT or Enum name directly (e.g., user types "MyUDT." or "MyEnum.")
+      const udtOrEnumNameCandidate = this.cleanTypeName(firstPart)
+      const udtDoc = this.docsManager.getMap('UDT').get(udtOrEnumNameCandidate)
+      if (udtDoc && udtDoc.fields) {
+        currentTypeName = udtOrEnumNameCandidate
+        currentLibId = udtDoc.libId
+        currentMembers = udtDoc.fields
+        currentNamespaceForCompletionDoc = firstPart // Namespace is the UDT name
+      } else {
+        const enumDoc = this.docsManager.getMap('enums').get(udtOrEnumNameCandidate)
+        if (enumDoc && enumDoc.members) {
+          currentTypeName = udtOrEnumNameCandidate // This is an Enum
+          currentLibId = enumDoc.libId
+          currentMembers = enumDoc.members // Suggest enum members
+          currentNamespaceForCompletionDoc = firstPart // Namespace is the Enum name
+        }
       }
     }
 
     // Iteratively resolve path segments for nested UDTs
-    // parts are [ "varName", "field1", "field2", "partialOrEmpty" ]
-    // We need to resolve up to parts[parts.length - 2] to get the members for parts[parts.length - 1]
+    // parts are [ "varOrUdtName", "field1", "field2", "partialOrEmpty" ]
+    // Loop from the first field access (index 1) up to the part *before* the partial/empty last part.
     for (let i = 1; i < parts.length - 1; i++) {
-      if (!currentTypeName) {
-        break
-      } // Cannot proceed if current type is unknown
+      if (!currentMembers) { // If previous segment didn't resolve to an object with members
+        currentTypeName = null; currentLibId = undefined; break;
+      }
       const segmentName = parts[i]
-      currentNamespaceForCompletionDoc = currentNamespaceForCompletionDoc
-        ? `${currentNamespaceForCompletionDoc}.${segmentName}`
-        : segmentName
+      // We are looking for `segmentName` within `currentMembers` (which are fields of the parent UDT).
+      const foundField = currentMembers.find((f: any) => f.name === segmentName)
 
-      const typeDef = this.docsManager.getMap('UDT').get(currentTypeName!) // Only UDTs have nested fields this way
-      if (typeDef && typeDef.fields) {
-        const foundField = typeDef.fields.find((f: any) => f.name === segmentName)
-        if (foundField && foundField.type) {
-          currentTypeName = foundField.type // This is the type of the field, e.g., "NestedUDT"
-          const nestedTypeDef = this.docsManager.getMap('UDT').get(currentTypeName!)
-          currentLibId = nestedTypeDef?.libId // LibId of the new current type
-          currentMembers = nestedTypeDef?.fields // Members of the new current type
+      if (foundField && foundField.type) {
+        const fieldActualType = this.cleanTypeName(foundField.type)
+        // A field's type must resolve to another UDT to have further .field access
+        const nestedTypeDef = this.docsManager.getMap('UDT').get(fieldActualType)
+        if (nestedTypeDef && nestedTypeDef.fields) {
+          currentTypeName = fieldActualType // The type of the current field, which is a UDT
+          currentMembers = nestedTypeDef.fields // These are the members for the *next* segment's lookup
+          currentLibId = nestedTypeDef.libId // LibId of this nested UDT
+          currentNamespaceForCompletionDoc = `${currentNamespaceForCompletionDoc}.${segmentName}`
         } else {
-          currentTypeName = null // Field not found or no type
-          currentMembers = null
-          break
+          // Field's type isn't a UDT with fields, so path ends here for further dot access.
+          currentTypeName = null; currentMembers = null; currentLibId = undefined; break;
         }
       } else {
-        currentTypeName = null // Not a UDT or no fields
-        currentMembers = null
-        break
+        // Segment (field) not found in parent UDT, or field has no type. Path ends.
+        currentTypeName = null; currentMembers = null; currentLibId = undefined; break;
       }
     }
 
     const partialNameAfterLastDot = parts[parts.length - 1]
 
-    // If after path resolution, we have a currentTypeName, fetch its members
-    if (currentTypeName && !currentMembers) {
-      // !currentMembers ensures we only fetch if not already set by direct UDT/Enum name access
-      const finalTypeDef = this.docsManager.getMap('UDT', 'enums').get(currentTypeName!)
-      if (finalTypeDef) {
-        currentMembers = finalTypeDef.fields || finalTypeDef.members
-        currentLibId = finalTypeDef.libId // LibId of the final UDT/Enum whose members are being listed
-      }
-    }
-
-    const udtMap = this.docsManager.getMap('UDT') // Primarily for UDTs
-    const enumMap = this.docsManager.getMap('enums') // Newly added for Enums
-    const constantsMap = this.docsManager.getMap('constants')
-
-    // If we have resolved members (currentMembers will be an array of field/member objects)
+    // If currentMembers are resolved (we have fields/enum members to suggest for the final part of the path)
     if (currentMembers) {
-      for (const member of currentMembers) {
+      for (const member of currentMembers) { // member is a field or enum member object
         if (partialNameAfterLastDot && !member.name.toLowerCase().startsWith(partialNameAfterLastDot.toLowerCase())) {
           continue
         }
-        const isEnumMember =
-          !currentNamespaceForCompletionDoc && parts.length === 2 && this.docsManager.getMap('enums').has(parts[0])
+
+        // Determine kind: 'Field' or 'EnumMember'
+        // If currentTypeName is an Enum and currentMembers are its members directly.
+        let memberKind = 'Field'; // Default to Field
+        const parentDoc = this.docsManager.getMap('UDT', 'enums').get(currentTypeName || '')
+        if (parentDoc && parentDoc.kind === 'enum_object') { // Assuming enums have a kind 'enum_object' or similar
+             memberKind = 'EnumMember';
+        } else if (parentDoc && parentDoc.fields && parentDoc.fields.includes(member)) {
+            memberKind = 'Field';
+        }
+        // A more direct check if the parent object (whose members these are) is an enum:
+        const directParentName = parts[parts.length - 2]; // The object name right before the current segment
+        if (directParentName) {
+            const cleanedParentName = this.cleanTypeName(directParentName);
+            const parentTypeDef = this.docsManager.getMap('enums').get(cleanedParentName);
+            if (parentTypeDef && parentTypeDef.members && parentTypeDef.members.includes(member)) {
+                 memberKind = 'EnumMember';
+            }
+        }
+
 
         completions.push({
           name: member.name,
-          doc: member, // The field/member object itself
-          namespace: currentNamespaceForCompletionDoc, // e.g., "myUdtVar" or "myUdtVar.field1"
-          kind: isEnumMember ? 'EnumMember' : 'Field',
-          type: member.type || (isEnumMember ? parts[0] : undefined), // Field's type or Enum's name for its members
-          description: member.desc || member.title,
-          libId: currentLibId, // LibId of the UDT/Enum that owns this member
-          isConst: isEnumMember, // Enum members are constants
+          doc: member, // The full field/member object {name, type, desc, libId, etc.}
+          namespace: currentNamespaceForCompletionDoc, // e.g., "myUdtVar" or "myUdtVar.field1" or "MyEnum"
+          kind: memberKind,
+          type: member.type, // Raw type string of the field/member
+          description: member.desc, // Description from @field annotation or parser
+          libId: member.libId || currentLibId, // Prefer field's own libId, fallback to parent UDT's
+          isConst: memberKind === 'EnumMember' || member.isConst, // Enum members or const fields
         })
       }
-      return completions
+      // If UDT/Enum path yielded results, return them.
+      // Avoid falling through to built-in namespace logic if we found UDT/Enum fields/members.
+      if (completions.length > 0) {
+        return completions;
+      }
     }
 
-    // Fallback or direct handling for built-in namespaces if not resolved as UDT/Enum and parts.length is 2
-    // (e.g. color.red, math.abs - this part reuses some logic from the original single-level completion)
-    if (parts.length === 2 && !currentTypeName) {
-      // Only proceed if not resolved as UDT/Enum path
+    // Fallback for built-in namespaces (e.g. color.red, math.abs)
+    // This should only trigger if the UDT/Enum path resolution above yielded no completions.
+    // And typically, these are direct lookups like `namespace.member`, so `parts.length === 2`.
+    if (parts.length === 2 && completions.length === 0) {
       const namespaceForBuiltins = parts[0]
       const partialNameForBuiltins = parts[1]
       const lowerNamespaceForBuiltins = namespaceForBuiltins.toLowerCase()
+      const constantsMap = this.docsManager.getMap('constants')
 
-      // Check constants
       for (const [constName, constDoc] of constantsMap.entries()) {
+        // Check if constant belongs to the namespace (e.g. constDoc.namespace === 'color')
+        // OR if the constant name itself is fully qualified (e.g. constName === 'color.red' and has no explicit namespace property)
         if (
-          typeof constName === 'string' &&
           (constDoc.namespace === namespaceForBuiltins ||
-            constName.toLowerCase().startsWith(lowerNamespaceForBuiltins + '.'))
+           (constName.startsWith(namespaceForBuiltins + '.') && constDoc.namespace === undefined))
         ) {
-          const memberName =
-            constDoc.namespace === namespaceForBuiltins
-              ? constDoc.name
-              : constName.substring(namespaceForBuiltins.length + 1)
+          // If constDoc.namespace exists, memberName is just constDoc.name.
+          // If not, and constName is "namespace.member", then memberName is "member".
+          const memberName = constDoc.namespace ? constDoc.name : constName.substring(namespaceForBuiltins.length + 1);
+
           if (memberName.toLowerCase().startsWith(partialNameForBuiltins.toLowerCase())) {
             completions.push({
               name: memberName,
@@ -478,32 +510,32 @@ export class PineCompletionService {
               isConst: true,
               kind: constDoc.kind || 'Constant',
               type: constDoc.type,
-              default: constDoc.syntax || constDoc.name,
+              default: constDoc.syntax || constDoc.name, // Original logic preferred syntax
               description: constDoc.desc,
-              libId: constDoc.libId, // Constants from libraries might have libId
+              libId: constDoc.libId,
             })
           }
         }
       }
-      // Check methods (static-like methods on built-in namespaces)
+      // Check methods (static-like methods on built-in namespaces, e.g., math.abs)
       const methodsMap = this.docsManager.getMap('methods', 'methods2')
       for (const [methodFullName, methodDoc] of methodsMap.entries()) {
         if (
           typeof methodFullName === 'string' &&
-          methodDoc.isMethod &&
-          methodFullName.toLowerCase().startsWith(lowerNamespaceForBuiltins + '.')
+          methodDoc.isMethod && // Ensure it's a method
+          methodFullName.startsWith(namespaceForBuiltins + '.') // e.g., "math.abs" starts with "math."
         ) {
           const methodRelativeName = methodFullName.substring(namespaceForBuiltins.length + 1)
           if (methodRelativeName.toLowerCase().startsWith(partialNameForBuiltins.toLowerCase())) {
             completions.push({
-              name: methodRelativeName + '()',
+              name: methodRelativeName + '()', // Add () for methods
               doc: methodDoc,
               namespace: namespaceForBuiltins,
               isMethod: true,
-              kind: methodDoc.kind,
-              type: methodDoc.type, // Return type
+              kind: methodDoc.kind || 'Method', // Default to 'Method' if not specified
+              type: methodDoc.type, // Return type of the method
               description: methodDoc.desc,
-              libId: methodDoc.libId, // Methods from libraries
+              libId: methodDoc.libId,
               args: methodDoc.args,
               returnTypes: methodDoc.returnedTypes,
               thisType: methodDoc.thisType,

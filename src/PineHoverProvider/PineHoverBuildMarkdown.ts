@@ -22,16 +22,23 @@ export class PineHoverBuildMarkdown {
 
       switch (contextualType) {
         case 'variable':
-          syntax = `${key}: ${typeInfo}`;
-          if (keyedDocs?.isConst) syntax = `(const) ${syntax}`;
-          if (keyedDocs?.isInput) syntax = `input ${syntax}`;
-          if (keyedDocs?.isSeries) syntax = `series ${syntax}`;
+          // Target: (variable) varName: type
+          syntax = `(variable) ${key}: ${typeInfo}`;
+          // Modifiers like input, series are typically part of the type string in Pine Script v5+
+          // or handled by separate properties if needed. For now, focusing on base syntax.
+          // if (keyedDocs?.isConst) syntax = `(const) ${syntax}`; // `isConst` might be better handled by `(const)` prefix if it's a true constant.
+          // For variables that are `const` in script, `doc.type` should ideally include `const` if from parser.
           break;
         case 'field':
+          // Target: (field) fieldName: type (within its UDT context if possible)
+          // The existing path logic is good for context.
           syntax = `(field) ${parentUDT ? parentUDT + '.' : (namespace ? namespace + '.' : '')}${key}: ${typeInfo}`;
           break;
         case 'enumMember':
-           syntax = `(enum member) ${parentEnum ? parentEnum + '.' : (namespace ? namespace + '.' : '')}${key}`;
+           // Target: (enum member) MemberName: EnumName
+           // parentEnum should be set by PineHoverProvider.resolveSymbolDocumentation
+           // namespace could be a fallback if parentEnum isn't directly on keyedDocs.
+           syntax = `(enum member) ${key}: ${keyedDocs.parentEnum || namespace || 'Enum'}`;
           break;
         case 'UDT':
           syntax = `type ${key}`;
@@ -40,7 +47,14 @@ export class PineHoverBuildMarkdown {
           syntax = `enum ${key}`;
           break;
         case 'constant':
-           syntax = `(constant) ${namespace ? namespace + '.' : ''}${key}: ${typeInfo}`;
+           // Target: (const) CONST_NAME: type
+           // Assuming 'key' here might be the full constant name if namespaced (e.g. "color.red")
+           // or just the member name if namespace is provided.
+           if (namespace) {
+             syntax = `(const) ${namespace}.${key}: ${typeInfo}`;
+           } else {
+             syntax = `(const) ${key}: ${typeInfo}`;
+           }
            break;
         case 'type':
             syntax = `(type) ${key}`;

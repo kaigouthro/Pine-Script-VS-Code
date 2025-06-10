@@ -203,6 +203,10 @@ export class PineParser {
           functionBuild.kind = 'User Method' // More specific kind
         }
 
+        if (alias) {
+          functionBuild.libId = alias;
+        }
+
         const funcParamsMatches = parameters.matchAll(this.funcArgPattern)
         for (const paramMatch of funcParamsMatches) {
           const { argModifier, argType: paramType, argName, argDefaultValue } = paramMatch.groups! // Non-null assertion is safe due to regex match
@@ -242,13 +246,13 @@ export class PineParser {
           functionBuild.args.forEach((arg: ParsedFunctionArgument) => {
             if (arg.name) {
               const paramLineRegex: RegExp = new RegExp(
-                `^\\s*\\/\\/\\s*@param\\s+${arg.name}\\s*(?:\\([^)]*\\))?\\s*(.+)`,
+                `^\\s*\\/\\/\\s*@param\\s+${arg.name}\\s*(?:\\([^)]*\\))?\\s*(.+)`, // Existing regex, seems fine
                 'i',
               )
               for (const line of lines) {
                 const match: RegExpMatchArray | null = line.match(paramLineRegex)
                 if (match && match[1]) {
-                  arg.desc = match[1].trim()
+                  arg.desc = match[1].trim() // Store description
                   break
                 }
               }
@@ -297,6 +301,10 @@ export class PineParser {
           originalName: typeName,
           kind: 'User Type', // Assign kind
           doc: annotationsGroup || '', // Store docstring
+        }
+
+        if (alias) {
+          typeBuild.libId = alias;
         }
 
         if (udtExportKeyword) {
@@ -350,8 +358,22 @@ export class PineParser {
             if (fieldValue) {
               fieldsDict.default = fieldValue
             }
-            // TODO: Parse @field annotations from annotationsGroup for this specific fieldName
-            // and add to fieldsDict.desc
+
+            if (alias) {
+              fieldsDict.libId = alias;
+            }
+
+            if (annotationsGroup) {
+              const fieldAnnotationRegex = new RegExp(`^\\s*\\/\\/\\s*@field\\s+${fieldName}\\s+(.+)`, 'i');
+              const annotationLines = annotationsGroup.split('\n');
+              for (const line of annotationLines) {
+                const match = line.match(fieldAnnotationRegex);
+                if (match && match[1]) {
+                  fieldsDict.desc = match[1].trim();
+                  break;
+                }
+              }
+            }
             typeBuild.fields.push(fieldsDict)
           }
         }
