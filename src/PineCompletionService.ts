@@ -162,7 +162,7 @@ export class PineCompletionService {
           type: doc?.type, // For variables/constants, their type. For UDT/Enum, its own name or "type"/"enum". For functions, return type summary.
           isConst: doc?.isConst,
           default: doc?.default,
-          description: doc?.desc,
+          description: doc?.description, // Use standardized description field
           libId: doc?.libId, // Populate libId
           args: doc?.args, // Populate args for functions/constructors
           returnTypes: doc?.returnedTypes, // Populate returnTypes for functions
@@ -263,7 +263,7 @@ export class PineCompletionService {
           isMethod: true, // It's a method completion
           kind: doc?.kind, // Original kind (should be Method)
           type: doc?.type, // Return type of the method (summary)
-          description: doc?.desc, // Description text
+          description: doc?.description, // Use standardized description field
           libId: doc?.libId, // Populate libId
           args: doc?.args, // Populate args for the method
           returnTypes: doc?.returnedTypes, // Populate detailed returnTypes
@@ -316,7 +316,7 @@ export class PineCompletionService {
         doc: constructorDoc, // Use the constructor's own documentation
         namespace: potentialUdtName,
         kind: 'Constructor',
-        description: constructorDoc.desc || `Creates a new instance of \`${potentialUdtName}\`.`,
+        description: constructorDoc.description || `Creates a new instance of \`${potentialUdtName}\`.`, // Use standardized description
         libId: constructorDoc.libId,
         args: constructorDoc.args, // Populate args for the constructor
         returnTypes: constructorDoc.returnedTypes, // Populate returnTypes (should be the UDT itself)
@@ -332,7 +332,7 @@ export class PineCompletionService {
           doc: udtDoc, // Link to the UDT documentation
           namespace: potentialUdtName,
           kind: 'Constructor',
-          description: udtDoc?.desc || `Creates a new instance of \`${potentialUdtName}\`.`,
+          description: udtDoc?.description || `Creates a new instance of \`${potentialUdtName}\`.`, // Use standardized description
           libId: udtDoc.libId, // UDT itself might have a libId
           // args might be part of udtDoc or need to be inferred/empty
           args:
@@ -510,7 +510,7 @@ export class PineCompletionService {
               kind: constDoc.kind || 'Constant',
               type: constDoc.type,
               default: constDoc.syntax || constDoc.name, // Original logic preferred syntax
-              description: constDoc.desc,
+              description: constDoc.description, // Use standardized description
               libId: constDoc.libId,
             })
           }
@@ -533,7 +533,7 @@ export class PineCompletionService {
               isMethod: true,
               kind: methodDoc.kind || 'Method', // Default to 'Method' if not specified
               type: methodDoc.type, // Return type of the method
-              description: methodDoc.desc,
+              description: methodDoc.description, // Use standardized description
               libId: methodDoc.libId,
               args: methodDoc.args,
               returnTypes: methodDoc.returnedTypes,
@@ -618,7 +618,7 @@ export class PineCompletionService {
         doc: argDoc, // The full argument object from function definition
         namespace: null,
         kind: 'Parameter', // Or "NamedArgument"
-        type: argDoc.displayType, // Use displayType
+        type: argDoc.type, // Use .type as ingestLintResponse maps displayType to type
         description: argDoc.desc, // Use desc from arg object
         // libId: argDoc.libId, // Not typically applicable to individual args unless they are complex types from libs
         // args: undefined, // Arguments don't have their own args
@@ -681,8 +681,8 @@ export class PineCompletionService {
           return {
             name: field.name,
             type: field.type || 'any', // Default to 'any' if type is missing
-            displayType: field.type || 'any', // For now, displayType is same as type
-            desc: field.desc || `Field ${field.name}.`, // Default description if missing
+            // displayType: field.type || 'any', // Not strictly needed if 'type' is primary
+            desc: field.description || field.desc || `Field ${field.name}.`, // Use standardized description
             default: field.default, // The default value itself
             required: isRequired,
             // isConst: field.isConst, // Store if needed for docs, not a typical arg property
@@ -709,7 +709,7 @@ export class PineCompletionService {
         return {
           name: searchName, // Full name like "MyUDT.new"
           kind: 'Constructor',
-          desc: udtDoc.desc || `Constructs a new instance of ${udtName}.`, // UDT's main description
+          description: udtDoc.description || udtDoc.desc || `Constructs a new instance of ${udtName}.`, // UDT's main description
           args: constructorArgs,
           returnTypes: [udtName], // Constructor returns an instance of the UDT
           libId: udtDoc.libId, // Library ID if the UDT is from a library

@@ -653,4 +653,177 @@ export class PineDocsManager {
     }
     return undefined // Return undefined if function is not found
   }
+
+  /**
+   * Parses an enum member's title or name to extract its potential value.
+   * Example titles: "MEMBER_A", "MEMBER_B = \"value_b\"", "MEMBER_C = 10"
+   * @param title The title string of the enum member.
+   * @returns The parsed value (string, number) or the original name if no value is assigned.
+   */
+  private _parseEnumValue(title: string): string | number | undefined {
+    if (!title) return undefined;
+    const parts = title.split('=');
+    if (parts.length > 1) {
+      let valueStr = parts.slice(1).join('=').trim(); // Handle cases like "MEMBER_D = val = 1"
+      // Check if string literal
+      if ((valueStr.startsWith('"') && valueStr.endsWith('"')) || (valueStr.startsWith("'") && valueStr.endsWith("'"))) {
+        return valueStr.slice(1, -1);
+      }
+      // Check if number literal
+      const num = parseFloat(valueStr);
+      if (!isNaN(num) && num.toString() === valueStr) {
+        return num;
+      }
+      // Otherwise, it might be an identifier or complex expression, return as string (or handle as needed)
+      return valueStr;
+    }
+    // No explicit assignment, the "value" is effectively the member's name (or its ordinal if not a string enum)
+    // For simplicity in suggestions, returning the name itself if no '=' is found.
+    // Actual runtime value might be its ordinal for non-string enums.
+    return undefined; // Let the language server or display logic handle ordinal values if needed.
+  }
+
+  /**
+   * Ingests data from a lint service response and populates the documentation manager.
+   * @param lintResult The result object from the lint service.
+   */
+  ingestLintResponse(lintResult: any): void {
+    if (!lintResult) {
+      console.warn('ingestLintResponse: lintResult is null or undefined. Skipping ingestion.');
+      return;
+    }
+
+    // Clear out arrays that hold script-specific data
+    this.variables2Docs = [];
+    this.functions2Docs = [];
+    this.methods2Docs = [];
+    this.completionFunctionsDocs = []; // Will be repopulated from functions2Docs
+    this.UDTDocs = [];
+    this.enumsDocs = [];
+    this.importsDocs = [];
+    this.importAliases = [];
+    // this.fields2Docs might not be needed if UDTs/Enums directly contain their fields/members
+
+    // Process Imports
+    for (const imp of lintResult.imports || []) {
+      const importDoc = {
+        name: imp.alias || imp.lib, // Use alias as name if available, else lib name
+        alias: imp.alias,
+        libId: imp.id || imp.libId, // Check for 'id' or 'libId'
+        user: imp.user,
+        libName: imp.lib,
+        version: imp.version,
+        kind: 'Import',
+        description: `Imports library '${imp.lib}' version ${imp.version}${imp.alias ? ` as '${imp.alias}'` : ''}. User: ${imp.user}`,
+      };
+      this.importsDocs.push(importDoc);
+      if (imp.alias) {
+        this.importAliases.push(imp.alias);
+      }
+    }
+
+    // Process Variables
+    for (const variable of lintResult.variables || []) {
+      const variableDoc = {
+        name: variable.name,
+        type: variable.type || 'any',
+        kind: 'Variable', // Could be refined if lint provides more (e.g. const, input)
+        libId: variable.libId,
+        description: variable.metaInfo?.docs || variable.desc || '',
+        originalName: variable.name,
+        // Consider adding 'default: variable.value' if lint provides initial values for globals
+      };
+      this.variables2Docs.push(variableDoc);
+    }
+
+    // Process Functions
+    for (const func of lintResult.functions || []) {
+      const args = (func.args || []).map((arg: any) => ({
+        name: arg.name,
+        type: arg.displayType || arg.type || 'any',
+        desc: arg.desc || '',
+        required: arg.required !== undefined ? arg.required : arg.defaultValue === undefined,
+        default: arg.defaultValue,
+        modifier: arg.modifier,
+      }));
+
+      let kind = 'Function';
+      if (func.name && func.name.includes('.new') && !func.thisType && !func.isMethod) {
+        kind = 'Constructor';
+      } else if (func.thisType || func.isMethod) {
+        kind = 'Method';
+      }
+      // TODO: Add UserExportFunction if func.export (or similar) is available
+
+      const functionDoc: any = {
+        name: func.name,
+        args: args,
+        kind: kind,
+        type: func.returnedTypes?.[0] || 'any', // Primary return type
+        returnedTypes: func.returnedTypes || ['any'], // Full list of return types
+        description: func.desc || func.metaInfo?.docs || '',
+        libId: func.libId,
+        thisType: func.thisType,
+        syntax: func.syntax?.[0] || func.name, // Fallback syntax to name
+        originalName: func.name,
+        isMethod: kind === 'Method', // Explicitly set isMethod based on determined kind
+      };
+      this.functions2Docs.push(functionDoc);
+    }
+
+    // Post-process functions2Docs to populate methods2Docs and completionFunctionsDocs
+    this.methods2Docs = this.functions2Docs.filter(f => f.isMethod || !!f.thisType);
+    this.completionFunctionsDocs = [...this.functions2Docs]; // For now, all functions are completion functions
+
+    // Process Types (UDTs)
+    for (const type of lintResult.types || []) {
+      const fields = (type.fields || []).map((field: any) => ({
+        name: field.name,
+        type: field.type || 'any',
+        desc: field.desc || field.metaInfo?.docs || '',
+        default: field.defaultValue,
+        isConst: field.isConst || (field.modifiers && field.modifiers.includes('const')),
+        kind: 'Field',
+      }));
+
+      const udtDoc = {
+        name: type.name,
+        kind: 'User Type', // Or "UDT" - ensure consistency with other parts of the system
+        fields: fields,
+        description: type.desc || type.metaInfo?.docs || '',
+        libId: type.libId,
+        originalName: type.name,
+      };
+      this.UDTDocs.push(udtDoc);
+    }
+
+    // Process Enums
+    for (const enumDef of lintResult.enums || []) {
+      const members = (enumDef.fields || []).map((member: any) => ({
+        name: member.name,
+        value: this._parseEnumValue(member.title || member.name),
+        kind: 'EnumMember',
+        desc: member.desc || member.metaInfo?.docs || '',
+        type: enumDef.name, // Type of an enum member is the enum itself
+      }));
+
+      const enumDoc = {
+        name: enumDef.name,
+        // kind: enumDef.export ? "UserExportEnum" : "UserEnum", // Assuming no export info from lint, default
+        kind: "UserEnum",
+        members: members,
+        description: enumDef.desc || enumDef.metaInfo?.docs || '',
+        libId: enumDef.libId,
+        originalName: enumDef.name,
+      };
+      this.enumsDocs.push(enumDoc);
+    }
+
+    // After all data is ingested, internal maps used by getMap() will be rebuilt on next call.
+    // No need to call setDocs or mergeDocs if we are replacing the arrays directly.
+    // The `cleaned = false` flag might need to be set to true here if it implies that docs are loaded.
+    // However, the original `cleanDocs` method seems to be for clearing these arrays, which we've done.
+    // Let's assume `cleaned` is related to the initial load from `pineDocs.json`.
+    console.log('PineDocsManager: Ingested data from lint response.');
+  }
 }
