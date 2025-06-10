@@ -95,7 +95,7 @@ export class PineCompletionProvider implements vscode.CompletionItemProvider {
       // Determine if the item is a method
       const isMethod = doc.isMethod ?? false
       // Get the kind of the item
-      const kind = doc.kind
+      const {kind} = doc
       // Determine if the item is the default (applies to function params for now)
       // doc.doc refers to the original documentation object stored inside CompletionDoc
       let preselect = doc.doc?.preselect ?? doc.default ?? false
@@ -301,10 +301,16 @@ export class PineCompletionProvider implements vscode.CompletionItemProvider {
       // For example, if docDetails has `thisType` it's likely a method.
       // If docDetails has `args` it's likely a function or method.
       // If docDetails has `fields` it's likely a UDT/Class/Enum.
-      if (docDetails?.thisType) return vscode.CompletionItemKind.Method;
-      if (docDetails?.args) return vscode.CompletionItemKind.Function; // Could be Constructor too, but handled above
+      if (docDetails?.thisType) {
+        return vscode.CompletionItemKind.Method;
+      }
+      if (docDetails?.args) {
+        return vscode.CompletionItemKind.Function;
+      } // Could be Constructor too, but handled above
       if (docDetails?.fields || docDetails?.members) { // .members for enums
-          if (kind?.toLowerCase().includes('enum')) return vscode.CompletionItemKind.Enum; // Check again if kind had 'enum'
+          if (kind?.toLowerCase().includes('enum')) {
+            return vscode.CompletionItemKind.Enum;
+          } // Check again if kind had 'enum'
           return vscode.CompletionItemKind.Class; // Default for things with fields
       }
 

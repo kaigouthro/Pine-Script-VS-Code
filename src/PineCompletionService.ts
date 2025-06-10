@@ -19,11 +19,11 @@ export interface CompletionDoc {
   description?: string // Direct description text
 
   // New fields based on the plan
-  libId?: string; // Library identifier
-  args?: any[]; // Detailed arguments for functions/constructors
-  returnTypes?: string[]; // For function return types
-  thisType?: string; // For methods, changed from string[] to string based on typical usage
-  fields?: any[]; // For UDTs/Enums to store their members/fields
+  libId?: string // Library identifier
+  args?: any[] // Detailed arguments for functions/constructors
+  returnTypes?: string[] // For function return types
+  thisType?: string // For methods, changed from string[] to string based on typical usage
+  fields?: any[] // For UDTs/Enums to store their members/fields
 
   // Optional: Add sortText if needed for specific ordering (e.g., for arguments)
   sortText?: string
@@ -48,8 +48,12 @@ export class PineCompletionService {
    * @returns true if the targetName is a plausible match for the potentialMatch with minor typos.
    */
   private checkTypoMatch(potentialMatch: string, targetName: string): boolean {
-    if (!potentialMatch) return true // Empty match matches everything (e.g., suggest all on empty line)
-    if (!targetName) return false
+    if (!potentialMatch) {
+      return true // Empty match matches everything (e.g., suggest all on empty line)
+    }
+    if (!targetName) {
+      return false
+    }
 
     const lowerPotential = potentialMatch.toLowerCase()
     const lowerTarget = targetName.toLowerCase()
@@ -120,7 +124,9 @@ export class PineCompletionService {
     // const matchLength = match.length; // Not needed with checkTypoMatch
 
     for (const [name, doc] of mapsToSearch.entries()) {
-      if (!name || name[0] === '*') continue // Skip items with no name or starting with '*' (if any)
+      if (!name || name[0] === '*') {
+        continue // Skip items with no name or starting with '*' (if any)
+      }
 
       const lowerName = name.toLowerCase()
 
@@ -185,7 +191,9 @@ export class PineCompletionService {
 
       // Expected format in map is likely `namespace.methodName`
       const nameParts = name.split('.')
-      if (nameParts.length < 2) continue // Skip items not in namespace.method format
+      if (nameParts.length < 2) {
+        continue // Skip items not in namespace.method format
+      }
       const docNamespace = nameParts[0]
       const docMethodName = nameParts.slice(1).join('.') // The actual method name part
 
@@ -215,16 +223,11 @@ export class PineCompletionService {
         }
         // Add more sophisticated type compatibility checks if needed for Pine Script.
         // For now, this basic check based on base type or namespace match replicates a plausible version of original intent.
+      } else if (variableOrNamespace === docNamespace) {
+        typeMatch = true
       } else {
-        // If the method has no documented `this` type, maybe it's a static method or global function namespaced?
-        // Assume it's a match if we can't check type compatibility, or if the namespace part matches explicitly.
-        // Let's require the documented namespace to match the typed namespace if type check fails.
-        if (variableOrNamespace === docNamespace) {
-          typeMatch = true
-        } else {
-          // If type check fails and namespace doesn't match, skip.
-          continue
-        }
+        // If type check fails and namespace doesn't match, skip.
+        continue
       }
 
       if (!typeMatch) {
@@ -314,7 +317,11 @@ export class PineCompletionService {
           description: udtDoc?.desc || `Creates a new instance of \`${potentialUdtName}\`.`,
           libId: udtDoc.libId, // UDT itself might have a libId
           // args might be part of udtDoc or need to be inferred/empty
-          args: udtDoc.args || (udtDoc.fields ? udtDoc.fields.map((f: any) => ({ name: f.name, type: f.type, desc: f.desc, required: false })) : []), // Attempt to use UDT fields as potential constructor args
+          args:
+            udtDoc.args ||
+            (udtDoc.fields
+              ? udtDoc.fields.map((f: any) => ({ name: f.name, type: f.type, desc: f.desc, required: false }))
+              : []), // Attempt to use UDT fields as potential constructor args
           returnTypes: [potentialUdtName], // Return type is the UDT itself
         })
       }
@@ -341,75 +348,81 @@ export class PineCompletionService {
     // partialNameAfterLastDot will be "part"
     // If match ends with '.', parts = ["obj", "field1", "field2", ""], currentNamespacePath = "obj.field1.field2", partialNameAfterLastDot = ""
 
-    if (parts.length === 0) return completions;
+    if (parts.length === 0) {
+      return completions
+    }
 
-    let currentTypeName: string | null = null;
-    let currentLibId: string | undefined = undefined;
-    let currentMembers: any[] | null = null;
-    let currentNamespaceForCompletionDoc = ''; // This will build up e.g., "myUdtVar.field1"
+    let currentTypeName: string | null = null
+    let currentLibId: string | undefined = undefined
+    let currentMembers: any[] | null = null
+    let currentNamespaceForCompletionDoc = '' // This will build up e.g., "myUdtVar.field1"
 
     // Resolve the type of the first part (variable or UDT name)
-    const firstPart = parts[0];
-    const variableDoc = this.docsManager.getMap('variables', 'variables2').get(firstPart);
+    const firstPart = parts[0]
+    const variableDoc = this.docsManager.getMap('variables', 'variables2').get(firstPart)
     if (variableDoc && variableDoc.type) {
-        currentTypeName = variableDoc.type;
-        currentNamespaceForCompletionDoc = firstPart;
-        // LibId of the variable's type, if the type itself is from a library
-        const initialTypeDoc = this.docsManager.getMap('UDT', 'enums').get(currentTypeName);
-        currentLibId = initialTypeDoc?.libId;
+      currentTypeName = variableDoc.type
+      currentNamespaceForCompletionDoc = firstPart
+      // LibId of the variable's type, if the type itself is from a library
+      const initialTypeDoc = this.docsManager.getMap('UDT', 'enums').get(currentTypeName!)
+      currentLibId = initialTypeDoc?.libId
     } else {
-        // Not a variable, maybe a UDT or Enum name directly?
-        const udtOrEnumDoc = this.docsManager.getMap('UDT', 'enums').get(firstPart);
-        if (udtOrEnumDoc) {
-            currentTypeName = firstPart;
-            currentLibId = udtOrEnumDoc.libId;
-            currentMembers = udtOrEnumDoc.fields || udtOrEnumDoc.members;
-            currentNamespaceForCompletionDoc = ''; // No prefix for direct UDT/Enum name
-        } else {
-            // Could be a built-in namespace like 'color' or 'math'
-             // Handled further down if not resolved as UDT/Enum/Variable
-        }
+      // Not a variable, maybe a UDT or Enum name directly?
+      const udtOrEnumDoc = this.docsManager.getMap('UDT', 'enums').get(firstPart)
+      if (udtOrEnumDoc) {
+        currentTypeName = firstPart
+        currentLibId = udtOrEnumDoc.libId
+        currentMembers = udtOrEnumDoc.fields || udtOrEnumDoc.members
+        currentNamespaceForCompletionDoc = '' // No prefix for direct UDT/Enum name
+      } else {
+        // Could be a built-in namespace like 'color' or 'math'
+        // Handled further down if not resolved as UDT/Enum/Variable
+      }
     }
 
     // Iteratively resolve path segments for nested UDTs
     // parts are [ "varName", "field1", "field2", "partialOrEmpty" ]
     // We need to resolve up to parts[parts.length - 2] to get the members for parts[parts.length - 1]
-    for (let i = 1; i < parts.length -1; i++) {
-        if (!currentTypeName) break; // Cannot proceed if current type is unknown
-        const segmentName = parts[i];
-        currentNamespaceForCompletionDoc = currentNamespaceForCompletionDoc ? `${currentNamespaceForCompletionDoc}.${segmentName}` : segmentName;
+    for (let i = 1; i < parts.length - 1; i++) {
+      if (!currentTypeName) {
+        break
+      } // Cannot proceed if current type is unknown
+      const segmentName = parts[i]
+      currentNamespaceForCompletionDoc = currentNamespaceForCompletionDoc
+        ? `${currentNamespaceForCompletionDoc}.${segmentName}`
+        : segmentName
 
-        const typeDef = this.docsManager.getMap('UDT').get(currentTypeName); // Only UDTs have nested fields this way
-        if (typeDef && typeDef.fields) {
-            const foundField = typeDef.fields.find((f: any) => f.name === segmentName);
-            if (foundField && foundField.type) {
-                currentTypeName = foundField.type; // This is the type of the field, e.g., "NestedUDT"
-                const nestedTypeDef = this.docsManager.getMap('UDT').get(currentTypeName);
-                currentLibId = nestedTypeDef?.libId; // LibId of the new current type
-                currentMembers = nestedTypeDef?.fields; // Members of the new current type
-            } else {
-                currentTypeName = null; // Field not found or no type
-                currentMembers = null;
-                break;
-            }
+      const typeDef = this.docsManager.getMap('UDT').get(currentTypeName!) // Only UDTs have nested fields this way
+      if (typeDef && typeDef.fields) {
+        const foundField = typeDef.fields.find((f: any) => f.name === segmentName)
+        if (foundField && foundField.type) {
+          currentTypeName = foundField.type // This is the type of the field, e.g., "NestedUDT"
+          const nestedTypeDef = this.docsManager.getMap('UDT').get(currentTypeName!)
+          currentLibId = nestedTypeDef?.libId // LibId of the new current type
+          currentMembers = nestedTypeDef?.fields // Members of the new current type
         } else {
-            currentTypeName = null; // Not a UDT or no fields
-            currentMembers = null;
-            break;
+          currentTypeName = null // Field not found or no type
+          currentMembers = null
+          break
         }
+      } else {
+        currentTypeName = null // Not a UDT or no fields
+        currentMembers = null
+        break
+      }
     }
 
-    const partialNameAfterLastDot = parts[parts.length - 1];
+    const partialNameAfterLastDot = parts[parts.length - 1]
 
     // If after path resolution, we have a currentTypeName, fetch its members
-    if (currentTypeName && !currentMembers) { // !currentMembers ensures we only fetch if not already set by direct UDT/Enum name access
-        const finalTypeDef = this.docsManager.getMap('UDT', 'enums').get(currentTypeName);
-        if (finalTypeDef) {
-            currentMembers = finalTypeDef.fields || finalTypeDef.members;
-            currentLibId = finalTypeDef.libId; // LibId of the final UDT/Enum whose members are being listed
-        }
+    if (currentTypeName && !currentMembers) {
+      // !currentMembers ensures we only fetch if not already set by direct UDT/Enum name access
+      const finalTypeDef = this.docsManager.getMap('UDT', 'enums').get(currentTypeName!)
+      if (finalTypeDef) {
+        currentMembers = finalTypeDef.fields || finalTypeDef.members
+        currentLibId = finalTypeDef.libId // LibId of the final UDT/Enum whose members are being listed
+      }
     }
-
 
     const udtMap = this.docsManager.getMap('UDT') // Primarily for UDTs
     const enumMap = this.docsManager.getMap('enums') // Newly added for Enums
@@ -417,78 +430,89 @@ export class PineCompletionService {
 
     // If we have resolved members (currentMembers will be an array of field/member objects)
     if (currentMembers) {
-        for (const member of currentMembers) {
-            if (partialNameAfterLastDot && !member.name.toLowerCase().startsWith(partialNameAfterLastDot.toLowerCase())) {
-                continue;
-            }
-            const isEnumMember = !currentNamespaceForCompletionDoc && parts.length === 2 && this.docsManager.getMap('enums').has(parts[0]);
-
-            completions.push({
-                name: member.name,
-                doc: member, // The field/member object itself
-                namespace: currentNamespaceForCompletionDoc, // e.g., "myUdtVar" or "myUdtVar.field1"
-                kind: isEnumMember ? 'EnumMember' : 'Field',
-                type: member.type || (isEnumMember ? parts[0] : undefined), // Field's type or Enum's name for its members
-                description: member.desc || member.title,
-                libId: currentLibId, // LibId of the UDT/Enum that owns this member
-                isConst: isEnumMember, // Enum members are constants
-            });
+      for (const member of currentMembers) {
+        if (partialNameAfterLastDot && !member.name.toLowerCase().startsWith(partialNameAfterLastDot.toLowerCase())) {
+          continue
         }
-        return completions;
+        const isEnumMember =
+          !currentNamespaceForCompletionDoc && parts.length === 2 && this.docsManager.getMap('enums').has(parts[0])
+
+        completions.push({
+          name: member.name,
+          doc: member, // The field/member object itself
+          namespace: currentNamespaceForCompletionDoc, // e.g., "myUdtVar" or "myUdtVar.field1"
+          kind: isEnumMember ? 'EnumMember' : 'Field',
+          type: member.type || (isEnumMember ? parts[0] : undefined), // Field's type or Enum's name for its members
+          description: member.desc || member.title,
+          libId: currentLibId, // LibId of the UDT/Enum that owns this member
+          isConst: isEnumMember, // Enum members are constants
+        })
+      }
+      return completions
     }
 
     // Fallback or direct handling for built-in namespaces if not resolved as UDT/Enum and parts.length is 2
     // (e.g. color.red, math.abs - this part reuses some logic from the original single-level completion)
-    if (parts.length === 2 && !currentTypeName) { // Only proceed if not resolved as UDT/Enum path
-        const namespaceForBuiltins = parts[0];
-        const partialNameForBuiltins = parts[1];
-        const lowerNamespaceForBuiltins = namespaceForBuiltins.toLowerCase();
+    if (parts.length === 2 && !currentTypeName) {
+      // Only proceed if not resolved as UDT/Enum path
+      const namespaceForBuiltins = parts[0]
+      const partialNameForBuiltins = parts[1]
+      const lowerNamespaceForBuiltins = namespaceForBuiltins.toLowerCase()
 
-        // Check constants
-        for (const [constName, constDoc] of constantsMap.entries()) {
-            if (typeof constName === 'string' &&
-                (constDoc.namespace === namespaceForBuiltins || constName.toLowerCase().startsWith(lowerNamespaceForBuiltins + '.'))) {
-                const memberName = constDoc.namespace === namespaceForBuiltins ? constDoc.name : constName.substring(namespaceForBuiltins.length + 1);
-                if (memberName.toLowerCase().startsWith(partialNameForBuiltins.toLowerCase())) {
-                    completions.push({
-                        name: memberName,
-                        doc: constDoc,
-                        namespace: namespaceForBuiltins,
-                        isConst: true,
-                        kind: constDoc.kind || 'Constant',
-                        type: constDoc.type,
-                        default: constDoc.syntax || constDoc.name,
-                        description: constDoc.desc,
-                        libId: constDoc.libId, // Constants from libraries might have libId
-                    });
-                }
-            }
+      // Check constants
+      for (const [constName, constDoc] of constantsMap.entries()) {
+        if (
+          typeof constName === 'string' &&
+          (constDoc.namespace === namespaceForBuiltins ||
+            constName.toLowerCase().startsWith(lowerNamespaceForBuiltins + '.'))
+        ) {
+          const memberName =
+            constDoc.namespace === namespaceForBuiltins
+              ? constDoc.name
+              : constName.substring(namespaceForBuiltins.length + 1)
+          if (memberName.toLowerCase().startsWith(partialNameForBuiltins.toLowerCase())) {
+            completions.push({
+              name: memberName,
+              doc: constDoc,
+              namespace: namespaceForBuiltins,
+              isConst: true,
+              kind: constDoc.kind || 'Constant',
+              type: constDoc.type,
+              default: constDoc.syntax || constDoc.name,
+              description: constDoc.desc,
+              libId: constDoc.libId, // Constants from libraries might have libId
+            })
+          }
         }
-        // Check methods (static-like methods on built-in namespaces)
-        const methodsMap = this.docsManager.getMap('methods', 'methods2');
-        for (const [methodFullName, methodDoc] of methodsMap.entries()) {
-            if (typeof methodFullName === 'string' && methodDoc.isMethod &&
-                methodFullName.toLowerCase().startsWith(lowerNamespaceForBuiltins + '.')) {
-                const methodRelativeName = methodFullName.substring(namespaceForBuiltins.length + 1);
-                if (methodRelativeName.toLowerCase().startsWith(partialNameForBuiltins.toLowerCase())) {
-                    completions.push({
-                        name: methodRelativeName + '()',
-                        doc: methodDoc,
-                        namespace: namespaceForBuiltins,
-                        isMethod: true,
-                        kind: methodDoc.kind,
-                        type: methodDoc.type, // Return type
-                        description: methodDoc.desc,
-                        libId: methodDoc.libId, // Methods from libraries
-                        args: methodDoc.args,
-                        returnTypes: methodDoc.returnedTypes,
-                        thisType: methodDoc.thisType,
-                    });
-                }
-            }
+      }
+      // Check methods (static-like methods on built-in namespaces)
+      const methodsMap = this.docsManager.getMap('methods', 'methods2')
+      for (const [methodFullName, methodDoc] of methodsMap.entries()) {
+        if (
+          typeof methodFullName === 'string' &&
+          methodDoc.isMethod &&
+          methodFullName.toLowerCase().startsWith(lowerNamespaceForBuiltins + '.')
+        ) {
+          const methodRelativeName = methodFullName.substring(namespaceForBuiltins.length + 1)
+          if (methodRelativeName.toLowerCase().startsWith(partialNameForBuiltins.toLowerCase())) {
+            completions.push({
+              name: methodRelativeName + '()',
+              doc: methodDoc,
+              namespace: namespaceForBuiltins,
+              isMethod: true,
+              kind: methodDoc.kind,
+              type: methodDoc.type, // Return type
+              description: methodDoc.desc,
+              libId: methodDoc.libId, // Methods from libraries
+              args: methodDoc.args,
+              returnTypes: methodDoc.returnedTypes,
+              thisType: methodDoc.thisType,
+            })
+          }
         }
+      }
     }
-    return completions;
+    return completions
   }
 
   /**
@@ -586,7 +610,9 @@ export class PineCompletionService {
    * @returns The documentation object if found, otherwise undefined.
    */
   getFunctionDocs(name: string): any | undefined {
-    if (!name) return undefined
+    if (!name) {
+      return undefined
+    }
 
     // Normalize name for lookup (e.g., remove trailing ())
     const searchName = name.replace(/\(\)$/, '') // Remove () if present
@@ -622,7 +648,11 @@ export class PineCompletionService {
           ...udtDoc, // Spread UDT properties like name, libId, desc
           name: searchName, // Ensure the name is the constructor name "MyType.new"
           kind: 'Constructor', // Explicitly set kind
-          args: udtDoc.args || (udtDoc.fields ? udtDoc.fields.map((f: any) => ({ name: f.name, type: f.type, desc: f.desc, required: false })) : []), // Use existing args or infer from fields
+          args:
+            udtDoc.args ||
+            (udtDoc.fields
+              ? udtDoc.fields.map((f: any) => ({ name: f.name, type: f.type, desc: f.desc, required: false }))
+              : []), // Use existing args or infer from fields
           returnedTypes: [udtName], // Constructor returns an instance of the UDT
         }
       }

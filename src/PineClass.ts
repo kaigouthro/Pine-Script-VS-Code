@@ -14,9 +14,6 @@ import { PineFormatResponse } from './PineFormatResponse'
 import { PineScriptList } from './PineScriptList'
 import { PineTemplates } from './PineTemplates'
 import { PineDocsManager } from './PineDocsManager'
-import { PineHoverParam } from './PineHoverProvider/PineHoverIsParam'
-import { PineHoverFunction } from './PineHoverProvider/PineHoverIsFunction'
-import { PineHoverMethod } from './PineHoverProvider/PineHoverIsMethod'
 import { PineRenameProvider } from './PineRenameProvider'
 import { PineParser } from './PineParser'
 import { PineCompletionService } from './PineCompletionService'
@@ -25,7 +22,7 @@ export class Class {
   public static context: vscode.ExtensionContext | undefined
 
   public static pineDocsManager: PineDocsManager
-  public static pineCompletionService: PineCompletionService;
+  public static pineCompletionService: PineCompletionService
   public static pineUserInputs: PineUserInputs
   public static pineRequest: PineRequest
   public static pineHoverProvider: PineHoverProvider
@@ -38,9 +35,6 @@ export class Class {
   public static pineScriptList: PineScriptList
   public static pineTemplates: PineTemplates
   public static pineFormatResponse: PineFormatResponse
-  public static pineHoverIsParam: PineHoverParam
-  public static pineHoverIsFunction: PineHoverFunction
-  public static pineHoverIsMethod: PineHoverMethod
   public static pineRenameProvider: PineRenameProvider
   public static pineParser: PineParser
 

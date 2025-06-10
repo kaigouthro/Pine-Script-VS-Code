@@ -1,4 +1,8 @@
 // src/index.ts
+import * as fs from 'fs'
+import * as path from 'path'
+
+
 
 export * from './PineClass';
 export * from './PineColorProvider';
@@ -14,7 +18,6 @@ export * from './PineHoverProvider/PineHoverBuildMarkdown';
 // export * from './PineHoverProvider/PineHoverIsFunction'; // REMOVED
 // export * from './PineHoverProvider/PineHoverIsMethod'; // REMOVED
 // export * from './PineHoverProvider/PineHoverIsParam'; // REMOVED
-export * from './PineInlineCompletionContext';
 export * from './PineLibCompletionProvider';
 export * from './PineLibHoverProvider';
 export * from './PineLint';

@@ -440,12 +440,11 @@ export class PineInlineCompletionContext implements vscode.InlineCompletionItemP
         const inlineCompletion = await this.createInlineCompletionItem(
           document,
           bestSuggestionForInline.name,
-          null,
-          bestSuggestionForInline,
+          null, // namespace for arguments is typically null
+          bestSuggestionForInline, // the doc object
           position,
-          true,
-          // Removed extra argument to match the expected function signature
-        )
+          true, // this is an argument completion
+        ) // Corrected: Removed extra argument that was causing a mismatch
         if (inlineCompletion) {
           this.completionItems.push(inlineCompletion)
         }

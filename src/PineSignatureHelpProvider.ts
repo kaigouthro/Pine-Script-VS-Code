@@ -401,7 +401,7 @@ export class PineSignatureHelpProvider implements vscode.SignatureHelpProvider {
       const argDesc = argDoc.desc || '';
       const { defaultValue: defaultValueStr, required } = this.getParameterDetails(argDoc); // Use helper for default and required
 
-      const paramLabelForInfo = `${argName}${!required ? '?' : ''}: ${argType}${defaultValueStr}`;
+      const paramLabelForInfo = `${argName}${required ? '' : '?'}: ${argType}${defaultValueStr}`;
 
       const paramDocumentation = new vscode.MarkdownString();
       paramDocumentation.appendMarkdown(`**${argName}**`);
@@ -422,8 +422,12 @@ export class PineSignatureHelpProvider implements vscode.SignatureHelpProvider {
           const start = matchInSyntax.index;
           // Attempt to find the end of the parameter definition (e.g., up to comma, closing paren, or default value)
           let end = displaySyntax.indexOf(',', start);
-          if (end === -1) end = displaySyntax.indexOf(')', start);
-          if (end === -1) end = displaySyntax.length; // Fallback
+          if (end === -1) {
+            end = displaySyntax.indexOf(')', start);
+          }
+          if (end === -1) {
+            end = displaySyntax.length;
+          } // Fallback
 
           // More precise end: find where type ends, or default value ends
           const segment = displaySyntax.substring(start, end);
@@ -649,7 +653,9 @@ export class PineSignatureHelpProvider implements vscode.SignatureHelpProvider {
       // This should be built from docs.args directly, not activeSignatureHelper which is simpler.
       const paramArray: CompletionItem[] = docs.args
         .map((argDoc: any): CompletionItem | null => {
-          if (!argDoc || !argDoc.name) return null;
+          if (!argDoc || !argDoc.name) {
+            return null;
+          }
           return {
             name: `${argDoc.name}=`,
             kind: 'Parameter', // Or "NamedArgument"
@@ -664,7 +670,9 @@ export class PineSignatureHelpProvider implements vscode.SignatureHelpProvider {
 
       for (const argDoc of docs.args) { // Iterate over rich argDoc from function definition
         const argName = argDoc.name;
-        if (!argName) continue;
+        if (!argName) {
+          continue;
+        }
 
         // Check if this argName is part of the current signature being processed by activeSignatureHelper
         // This check might be redundant if activeSignatureHelper is for the *active* signature from docs.args already

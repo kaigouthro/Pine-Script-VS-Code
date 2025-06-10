@@ -121,9 +121,9 @@ export class PineFormatResponse {
     }
 
     if (PineResponseFlow.docChange && functions.length > 0) {
-      Class.PineDocsManager.setDocs('completionFunctions', funcsCompletions)
-      Class.PineDocsManager.setDocs('functions2', funcs)
-      Class.PineDocsManager.setDocs('methods2', methods)
+      Class.PineDocsManager.setDocs(funcsCompletions, 'completionFunctions')
+      Class.PineDocsManager.setDocs(funcs, 'functions2')
+      Class.PineDocsManager.setDocs(methods, 'methods2')
     }
   }
 
@@ -146,7 +146,7 @@ export class PineFormatResponse {
     }
 
     if (PineResponseFlow.docChange && variables.length > 0) {
-      Class.PineDocsManager.setDocs('variables2', formattedVariables)
+      Class.PineDocsManager.setDocs(formattedVariables, 'variables2')
     }
   }
 
@@ -190,8 +190,8 @@ export class PineFormatResponse {
     }
 
     if (PineResponseFlow.docChange && types.length > 0) {
-      Class.PineDocsManager.setDocs('fields2', fieldsCollection)
-      Class.PineDocsManager.setDocs('UDT', udtCollection)
+      Class.PineDocsManager.setDocs(fieldsCollection, 'fields2')
+      Class.PineDocsManager.setDocs(udtCollection, 'UDT')
     }
   }
 
@@ -214,8 +214,9 @@ export class PineFormatResponse {
         // syntax: `enum ${enumDef.name}` // Basic syntax
       }
 
-      let enumSyntax = [`enum ${enumDef.name}`];
-      if (enumDef.fields) { // Assuming 'fields' holds enum members based on plan
+      let enumSyntax = [`enum ${enumDef.name}`]
+      if (enumDef.fields) {
+        // Assuming 'fields' holds enum members based on plan
         for (const member of enumDef.fields) {
           const memberDoc = {
             name: member.name,
@@ -232,13 +233,13 @@ export class PineFormatResponse {
           enumSyntax.push(`    ${member.name}${member.title ? ` // ${member.title}` : ''}`)
         }
       }
-      enumDoc.syntax = enumSyntax.join('\n');
+      enumDoc.syntax = enumSyntax.join('\n')
       enumCollection[0].docs.push(enumDoc)
     }
 
     if (PineResponseFlow.docChange && enums.length > 0) {
       // This assumes PineDocsManager has a way to handle 'enums' or a generic symbol type
-      Class.PineDocsManager.setDocs('enums', enumCollection)
+      Class.PineDocsManager.setDocs(enumCollection, 'enums')
       // If enum members are stored separately for completion:
       // Class.PineDocsManager.setDocs('enumMembers', enumMemberCollection);
     }

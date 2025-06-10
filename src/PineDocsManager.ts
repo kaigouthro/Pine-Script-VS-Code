@@ -1,6 +1,7 @@
 // In PineDocsManager.ts
 
-import { path, fs } from './index'
+import * as fs from 'fs'
+import * as path from 'path'
 
 /**
  * PineDocsManager handles the management of Pine documentation.
@@ -394,15 +395,15 @@ export class PineDocsManager {
           if (currentDocEntry) {
             // Update existing entry
             // Prioritize details from PineParser (doc) for user-defined functions
-            currentDocEntry.kind = doc.kind || currentDocEntry.kind;
-            currentDocEntry.body = doc.body || currentDocEntry.body; 
-            currentDocEntry.doc = doc.doc || currentDocEntry.doc; // Parsed docstring
+            currentDocEntry.kind = doc.kind || currentDocEntry.kind
+            currentDocEntry.body = doc.body || currentDocEntry.body
+            currentDocEntry.doc = doc.doc || currentDocEntry.doc // Parsed docstring
 
             if (doc.export !== undefined) {
-              currentDocEntry.export = doc.export;
+              currentDocEntry.export = doc.export
             }
             if (doc.method !== undefined) {
-              currentDocEntry.method = doc.method;
+              currentDocEntry.method = doc.method
             }
 
             // Merge arguments (keyType is 'args' for functions) or fields (keyType is 'fields' for UDTs)
@@ -410,36 +411,40 @@ export class PineDocsManager {
               if (!Array.isArray(currentDocEntry[keyType])) {
                 currentDocEntry[keyType] = []
               }
-              for (let parsedMember of doc[keyType]) { // Can be an argument or a field
+              for (let parsedMember of doc[keyType]) {
+                // Can be an argument or a field
                 const memberName = parsedMember.name
                 let currentMember = currentDocEntry[keyType].find((m: any) => m.name === memberName)
 
                 if (currentMember) {
                   // Update properties of the existing member (arg or field)
-                  currentMember.type = parsedMember.type || currentMember.type;
-                  currentMember.kind = parsedMember.kind || currentMember.kind; // Ensure kind is updated
-                  if (parsedMember.default !== undefined) { // Check for undefined to allow setting null or empty string defaults
+                  currentMember.type = parsedMember.type || currentMember.type
+                  currentMember.kind = parsedMember.kind || currentMember.kind // Ensure kind is updated
+                  if (parsedMember.default !== undefined) {
+                    // Check for undefined to allow setting null or empty string defaults
                     currentMember.default = parsedMember.default
                   }
-                  if (parsedMember.isConst !== undefined) { // Ensure isConst is updated
-                    currentMember.isConst = parsedMember.isConst;
+                  if (parsedMember.isConst !== undefined) {
+                    // Ensure isConst is updated
+                    currentMember.isConst = parsedMember.isConst
                   }
-                  if (keyType === 'args') { // Argument-specific properties
-                    currentMember.required = parsedMember.required; // Note: UDT fields don't typically have 'required' in the same way as func args
+                  if (keyType === 'args') {
+                    // Argument-specific properties
+                    currentMember.required = parsedMember.required // Note: UDT fields don't typically have 'required' in the same way as func args
                     if (parsedMember.modifier) {
-                      currentMember.modifier = parsedMember.modifier;
+                      currentMember.modifier = parsedMember.modifier
                     }
                   }
                 } else {
                   // Add new member if not found
-                  currentDocEntry[keyType].push(parsedMember);
+                  currentDocEntry[keyType].push(parsedMember)
                 }
               }
             }
             currentMap.set(name, currentDocEntry)
-          } else if (keyType === 'args' || keyType === 'fields') { 
+          } else if (keyType === 'args' || keyType === 'fields') {
             // Add new entry if it doesn't exist in the map (for functions/args or UDTs/fields)
-            currentMap.set(name, doc);
+            currentMap.set(name, doc)
           }
         }
         // Save the updated map.
@@ -477,33 +482,46 @@ export class PineDocsManager {
   mergeDocs(currentDocs: any[], newDocs: any[]): any[] {
     try {
       if (!newDocs || newDocs.length === 0) {
-        //console.log('No new docs to merge')
+        // No new docs to merge, return the original list
         return currentDocs
       }
 
-      let mergedDocs: any[] = []
-      for (const doc of newDocs) {
-        if (Array.isArray(doc.docs)) {
-          //console.log('doc.docs true')
-          for (const newDoc of doc.docs) {
-            const oldDoc = currentDocs.find((currentDoc) => currentDoc.name === newDoc.name)
-            if (oldDoc) {
-              //console.log('old Docs')
-              const mergedDict = { ...oldDoc, ...newDoc }
-              mergedDocs.push(mergedDict)
-            } else {
-              //console.log('old Docs else')
-              mergedDocs.push(newDoc)
+      const docMap = new Map<string, any>()
+
+      // 1. Add all current docs to a map, keyed by name.
+      for (const doc of currentDocs) {
+        if (doc?.name) {
+          docMap.set(doc.name, doc)
+        }
+      }
+
+      // 2. Iterate through the new docs.
+      //    Update existing entries in the map or add new ones.
+      for (const docContainer of newDocs) {
+        // docContainer is expected to be like { docs: [...] }
+        if (Array.isArray(docContainer.docs)) {
+          for (const newDoc of docContainer.docs) {
+            if (newDoc?.name) {
+              const oldDoc = docMap.get(newDoc.name)
+              if (oldDoc) {
+                // If doc exists, merge by overwriting old properties with new ones
+                docMap.set(newDoc.name, { ...oldDoc, ...newDoc })
+              } else {
+                // If it's a completely new doc, add it
+                docMap.set(newDoc.name, newDoc)
+              }
             }
           }
         } else {
-          console.warn(`Expected an array for doc.docs, but received: ${typeof doc.docs}`, 'mergeDocs')
+          console.warn(`Expected an array for doc.docs, but received: ${typeof docContainer.docs}`, 'mergeDocs')
         }
       }
-      return [...new Set(mergedDocs)]
+
+      // 3. Convert the map values back to an array.
+      return Array.from(docMap.values())
     } catch (error) {
       console.error(error)
-      return []
+      return currentDocs // Return original docs on error
     }
   }
 
