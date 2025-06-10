@@ -122,6 +122,21 @@ export class PineHoverProvider implements vscode.HoverProvider {
     fullPath: string,
     finalWordRange: vscode.Range,
   ): Promise<{ doc: any | null; name: string | null; context?: any }> {
+    // --- START: Attempt Local Symbol Resolution ---
+    // This is a simplified approach. A robust solution needs proper AST parsing and scope analysis from PineParser.ts
+    // For now, we'll make a placeholder call and then attempt parameter resolution if it's a single identifier.
+
+    // Hypothetical call to a parser service that understands local scopes
+    // const localSymbolDoc = Class.PineParser?.getLocalSymbolAt(this.document, this.position, fullPath);
+    // if (localSymbolDoc) {
+    //   return {
+    //     doc: localSymbolDoc,
+    //     name: fullPath,
+    //     context: { type: localSymbolDoc.contextualType || 'localVariable' }
+    //   };
+    // }
+    // --- END: Attempt Local Symbol Resolution ---
+
     const parts = fullPath.split('.')
     const charAfterRange = this.document.getText(
       new vscode.Range(finalWordRange.end, finalWordRange.end.translate(0, 1)),
@@ -132,6 +147,40 @@ export class PineHoverProvider implements vscode.HoverProvider {
       const identifier = parts[0]
       let doc: any = null
       let contextType = 'identifier'
+
+      // --- START: Attempt Parameter Resolution (Heuristic) ---
+      // This is a heuristic and needs a proper parser for robustness.
+      // It assumes `identifier` could be a parameter if we are inside a function.
+      // We don't have a reliable way to get "current function" here without parser support.
+      // Let's assume `PineCompletionService.getFunctionScopeDetailsAt(this.document, this.position)` could provide it.
+      // For now, this block will be largely conceptual.
+
+      // const functionScope = Class.PineCompletionService?.getFunctionScopeDetailsAt(this.document, this.position);
+      // if (functionScope && functionScope.parameters) {
+      //   const paramDoc = functionScope.parameters.find(p => p.name === identifier);
+      //   if (paramDoc) {
+      //     return {
+      //       doc: { ...paramDoc, description: paramDoc.desc || "Function parameter" }, // Ensure description
+      //       name: identifier,
+      //       context: { type: 'parameter', parentFunction: functionScope.functionName }
+      //     };
+      //   }
+      // }
+      // --- END: Attempt Parameter Resolution ---
+
+      // --- START: Simulated Local Variable Resolution (if not parameter and no global found later) ---
+      // This section is purely for illustrating where true local variable lookup would integrate.
+      // It depends on `PineParser.ts` providing a method like `getLocalSymbolTree(this.document)`.
+      // For now, this won't actually execute in a meaningful way.
+      let isPotentiallyLocal = false // Flag to indicate if we should simulate if no globals are found
+      const currentLine = finalWordRange.start.line
+      // Heuristic: check if we are inside some block (indentation or function patterns nearby)
+      // This is NOT a robust way to determine if we are in a local scope.
+      if (this.document.lineAt(currentLine).text.match(/^\s+/)) { // Basic indentation check
+        isPotentiallyLocal = true
+      }
+      // --- END: Simulated Local Variable Resolution ---
+
 
       doc = this.pineDocsManager.getMap('variables2').get(identifier)
       if (doc) {
@@ -171,6 +220,7 @@ export class PineHoverProvider implements vscode.HoverProvider {
           doc = constDoc
           contextType = 'constant'
         } else if (constDoc && constDoc.name.includes('.')) {
+          // If it's a namespaced constant like color.red, 'red' alone shouldn't find it here.
           doc = null
         }
       }
@@ -183,6 +233,31 @@ export class PineHoverProvider implements vscode.HoverProvider {
 
       if (doc) {
         return { doc, name: identifier, context: { type: contextType, libId: doc.libId } }
+      } else if (isPotentiallyLocal && parts.length === 1) {
+        // SIMULATION for local variable if no global symbol of `identifier` was found
+        // In a real scenario, a parser service would provide the actual type and definition.
+        // For now, we create a placeholder.
+        // This block is hit if `doc` is still null after all global checks for a single identifier.
+        // And we've heuristically determined it *might* be local.
+        // NOTE: This means if a local variable shadows a global one, this simulation
+        // currently won't show the local one because global takes precedence.
+        // True local resolution should happen *before* global lookups.
+        // The commented-out `localSymbolDoc` block at the top is the ideal placement.
+
+        // To make this simulation more visible for testing, let's assume if it's `isPotentiallyLocal`
+        // and no global is found, we will return a simulated local variable.
+        // This is NOT robust.
+        const simulatedLocalDoc = {
+            name: identifier,
+            type: 'unknownLocal', // In a real system, the parser would provide this
+            description: 'Local variable (simulated)',
+            kind: 'localVariable', // Or use a specific contextualType
+        };
+        return {
+            doc: simulatedLocalDoc,
+            name: identifier,
+            context: { type: 'localVariable' }
+        };
       }
       return { doc: null, name: null }
     }
