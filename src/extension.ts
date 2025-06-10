@@ -1,7 +1,7 @@
 import { Class } from './PineClass'
 import { PineDocString } from './PineDocString'
 import { PineResponseFlow } from './PineFormatResponse'
-import { PineTypify } from './index'
+// import { PineTypify } from './index' // REMOVED
 import { PineLint } from './PineLint'
 import { checkForNewVersionAndShowChangelog } from './newVersionPopUp'
 import * as vscode from 'vscode'
@@ -93,7 +93,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('pine.docString', async () => new PineDocString().docstring()),
     vscode.commands.registerCommand('pine.getStandardList', async () => Class.PineScriptList.showMenu('built-in')),
-    vscode.commands.registerCommand('pine.typify', async () => new PineTypify().typifyDocument()),
+    // vscode.commands.registerCommand('pine.typify', async () => new PineTypify().typifyDocument()), // REMOVED
     vscode.commands.registerCommand('pine.getIndicatorTemplate', async () => Class.PineTemplates.getIndicatorTemplate()),
     vscode.commands.registerCommand('pine.getStrategyTemplate', async () => Class.PineTemplates.getStrategyTemplate()),
     vscode.commands.registerCommand('pine.getLibraryTemplate', async () => Class.PineTemplates.getLibraryTemplate()),

@@ -1,33 +1,33 @@
-/* eslint-disable import/no-cycle */
-import * as fs from 'fs'
-import * as path from 'path'
+// src/index.ts
 
-// Only used for typedocs generation tryed to not use from the index
-// to avoid circular dependencies
-export { fs, path }
-export { Helpers } from './PineHelpers'
-export { PineTypify } from './PineTypify'
-export { PineSharedCompletionState } from './PineSharedCompletionState'
-export { PineStrings } from './PineStrings'
-export { PineUserInputs } from './PineUserInputs'
-export { PineTemplates } from './PineTemplates'
-export { Class } from './PineClass'
-export { PineScriptList } from './PineScriptList'
-export { PineLibHoverProvider } from './PineLibHoverProvider'
-export { PineLibCompletionProvider } from './PineLibCompletionProvider'
-export { PineFormatResponse } from './PineFormatResponse'
-export { PineColorProvider } from './PineColorProvider'
-export { PineDocsManager } from './PineDocsManager'
-export { PineDocString } from './PineDocString'
-export { PineCompletionProvider } from './PineCompletionProvider'
-export { PineHoverBuildMarkdown } from './PineHoverProvider/PineHoverBuildMarkdown'
-export { PineHoverHelpers } from './PineHoverProvider/PineHoverHelpers'
-export { PineHoverFunction } from './PineHoverProvider/PineHoverIsFunction'
-export { PineHoverMethod } from './PineHoverProvider/PineHoverIsMethod'
-export { PineHoverParam } from './PineHoverProvider/PineHoverIsParam'
-export { PineHoverProvider } from './PineHoverProvider/PineHoverProvider'
-export { PineLint } from './PineLint'
-export { PineRequest } from './PineRequest'
-export { PineRenameProvider } from './PineRenameProvider'
-export { PineSignatureHelpProvider } from './PineSignatureHelpProvider'
-export { PineParser } from './PineParser'
+export * from './PineClass';
+export * from './PineColorProvider';
+export * from './PineCompletionProvider';
+export * from './PineCompletionService';
+export * from './PineConsole';
+export * from './PineDocString';
+export * from './PineDocsManager';
+export * from './PineFormatResponse';
+// export * from './PineHoverProvider/PineHoverHelpers'; // REMOVED
+export * from './PineHoverProvider/PineHoverProvider';
+export * from './PineHoverProvider/PineHoverBuildMarkdown';
+// export * from './PineHoverProvider/PineHoverIsFunction'; // REMOVED
+// export * from './PineHoverProvider/PineHoverIsMethod'; // REMOVED
+// export * from './PineHoverProvider/PineHoverIsParam'; // REMOVED
+export * from './PineInlineCompletionContext';
+export * from './PineLibCompletionProvider';
+export * from './PineLibHoverProvider';
+export * from './PineLint';
+export * from './PineParser';
+export * from './PineRenameProvider';
+export * from './PineRequest';
+export * from './PineScriptList';
+export * from './PineSharedCompletionState';
+export * from './PineSignatureHelpProvider';
+export * from './PineStrings';
+export * from './PineTemplates';
+// export * from './PineTypify'; // REMOVED
+export * from './PineUserInputs';
+export * from './extension';
+export * from './newVersionPopUp';
+export * from './PineHelpers';
